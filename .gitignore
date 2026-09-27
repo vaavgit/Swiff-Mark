@@ -1,0 +1,46 @@
+# Built application files
+*.apk
+*.aab
+*.dex
+*.class
+
+# Gradle files
+.gradle/
+.kotlin/
+build/
+app/build/
+
+# Local configuration file (contains private keys, SDK paths)
+local.properties
+local.properties.bak
+*.properties.local
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# Native build caches
+.cxx/
+.externalNativeBuild/
+captures/
+
+# Signing keys & certificates
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Logs & scratch
+*.log
+*.txt.bak

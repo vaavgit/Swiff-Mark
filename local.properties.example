@@ -1,0 +1,11 @@
+## Location of the Android SDK. This is usually set automatically by Android Studio.
+# On Windows, typically: C\:\\Users\\<YourUsername>\\AppData\\Local\\Android\\Sdk
+# On macOS, typically: /Users/<YourUsername>/Library/Android/sdk
+# On Linux, typically: /home/<YourUsername>/Android/Sdk
+sdk.dir=C\:\\Users\\<YourUsername>\\AppData\\Local\\Android\\Sdk
+
+## Supabase Cloud Credentials
+# Obtain these from your Supabase Dashboard: Settings -> API
+# Required for cloud synchronization, authentication, and attendance logging.
+SUPABASE_URL=https://<your-project-id>.supabase.co
+SUPABASE_ANON_KEY=your_supabase_anon_public_key_here
