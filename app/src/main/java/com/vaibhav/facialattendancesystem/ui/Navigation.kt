@@ -1602,65 +1602,40 @@ fun AppNavigation(
         }
 
         val currentUpdate = availableUpdate
-        var isDownloadingUpdate by remember { mutableStateOf(false) }
-        var downloadProgress by remember { mutableStateOf(0) }
         if (currentUpdate != null) {
             val (latestTag, releaseNotes, downloadUrl) = currentUpdate
             androidx.compose.material3.AlertDialog(
-                onDismissRequest = { if (!isDownloadingUpdate) availableUpdate = null },
+                onDismissRequest = { availableUpdate = null },
                 title = {
-                    Text(
-                        if (isDownloadingUpdate) "Updating ($downloadProgress%)"
-                        else "Update Available ($latestTag)",
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Update Available ($latestTag)", fontWeight = FontWeight.Bold)
                 },
                 text = {
-                    androidx.compose.foundation.layout.Column(
-                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
-                            fontSize = 14.sp
-                        )
-                        if (isDownloadingUpdate) {
-                            androidx.compose.material3.LinearProgressIndicator(
-                                progress = { (downloadProgress / 100f).coerceIn(0f, 1f) },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text(
-                                text = "Downloading... $downloadProgress%",
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
+                    Text(
+                        text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
+                        fontSize = 14.sp
+                    )
                 },
                 confirmButton = {
                     androidx.compose.material3.Button(
-                        enabled = !isDownloadingUpdate,
                         onClick = {
-                            isDownloadingUpdate = true
-                            downloadProgress = 0
-                            scope.launch {
-                                val (ok, msg) = com.vaibhav.facialattendancesystem.util.AppUpdateDownloader.downloadAndInstallApk(
-                                    context = context,
-                                    apkUrl = downloadUrl,
-                                    onProgress = { pct -> downloadProgress = pct }
+                            availableUpdate = null
+                            try {
+                                val intent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(downloadUrl)
                                 )
-                                isDownloadingUpdate = false
-                                availableUpdate = null
-                                showBanner(msg, !ok)
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
                             }
                         }
                     ) {
-                        Text(if (isDownloadingUpdate) "Updating..." else "Update")
+                        Text("Download")
                     }
                 },
                 dismissButton = {
-                    if (!isDownloadingUpdate) {
-                        TextButton(onClick = { availableUpdate = null }) {
-                            Text("Later")
-                        }
+                    TextButton(onClick = { availableUpdate = null }) {
+                        Text("Later")
                     }
                 }
             )

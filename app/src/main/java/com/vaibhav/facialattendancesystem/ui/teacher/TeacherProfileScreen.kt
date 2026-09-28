@@ -321,45 +321,6 @@ fun TeacherProfileScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // ── Manual Wireless App Update Button ─────────────────────
-        val showBanner = com.vaibhav.facialattendancesystem.ui.components.LocalBannerManager.current
-        var isUpdatingWirelessly by remember { mutableStateOf(false) }
-        var wirelessUpdatePct by remember { mutableStateOf(0) }
-        OutlinedButton(
-            enabled = !isUpdatingWirelessly,
-            onClick = {
-                isUpdatingWirelessly = true
-                wirelessUpdatePct = 0
-                scope.launch {
-                    val release = com.vaibhav.facialattendancesystem.util.AppUpdateDownloader.fetchLatestRelease()
-                    if (release == null || release.apkDownloadUrl.isBlank()) {
-                        isUpdatingWirelessly = false
-                        showBanner("Could not reach GitHub release server.", true)
-                    } else {
-                        val (ok, msg) = com.vaibhav.facialattendancesystem.util.AppUpdateDownloader.downloadAndInstallApk(
-                            context = context,
-                            apkUrl = release.apkDownloadUrl,
-                            onProgress = { pct -> wirelessUpdatePct = pct }
-                        )
-                        isUpdatingWirelessly = false
-                        showBanner(msg, !ok)
-                    }
-                }
-            },
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryCyan.copy(alpha = 0.8f)),
-            modifier = Modifier.fillMaxWidth().height(50.dp)
-        ) {
-            Text(
-                text = if (isUpdatingWirelessly) "Updating ($wirelessUpdatePct%)..." else "Update",
-                color = PrimaryCyan,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
         var showLogoutDialog by remember { mutableStateOf(false) }
 
         OutlinedButton(
