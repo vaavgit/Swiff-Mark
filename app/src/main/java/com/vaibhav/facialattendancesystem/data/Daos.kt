@@ -184,7 +184,7 @@ interface ClassEnrollmentDao {
         SELECT COUNT(DISTINCT e.student_id) 
         FROM class_enrollments e 
         INNER JOIN classes c ON e.class_id = c.class_id 
-        WHERE c.teacher_id = :teacherId
+        WHERE c.teacher_id = :teacherId AND e.enrollment_verified = 1
     """)
     fun getTotalStudentsForTeacher(teacherId: String): Flow<Int>
 

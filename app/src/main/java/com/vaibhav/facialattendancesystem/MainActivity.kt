@@ -18,6 +18,7 @@ import com.vaibhav.facialattendancesystem.util.NotificationHelper
 class MainActivity : ComponentActivity() {
 
     private val recoveryTokenState = mutableStateOf<String?>(null)
+    private val targetClassState = mutableStateOf<Pair<String, String>?>(null)
 
     private val multiPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -27,7 +28,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Handle incoming deep link if launched via reset-password URL
+        // Handle incoming deep link or notification extras
         handleIntent(intent)
 
         // Initialize notification channel
@@ -54,7 +55,9 @@ class MainActivity : ComponentActivity() {
             FacialAttendanceSystemTheme {
                 AppNavigation(
                     recoveryToken = recoveryTokenState.value,
-                    onClearRecoveryToken = { recoveryTokenState.value = null }
+                    onClearRecoveryToken = { recoveryTokenState.value = null },
+                    targetClass = targetClassState.value,
+                    onClearTargetClass = { targetClassState.value = null }
                 )
             }
         }
@@ -66,11 +69,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        val uri = intent?.data ?: return
+        if (intent == null) return
+
+        // 1. Check for notification click extras (navigates student/teacher directly to class attendance)
+        val targetClassId = intent.getStringExtra("target_class_id")
+        val targetClassName = intent.getStringExtra("target_class_name")
+        if (!targetClassId.isNullOrBlank()) {
+            targetClassState.value = Pair(targetClassId, targetClassName ?: "Class")
+        }
+
+        // 2. Check for password recovery deep link
+        val uri = intent.data ?: return
         if (uri.scheme == "facialattendance" && uri.host == "reset-password") {
             var token: String? = null
 
-            // 1. Check URI Fragment (#access_token=...&type=recovery)
+            // Check URI Fragment (#access_token=...&type=recovery)
             val fragment = uri.fragment
             if (!fragment.isNullOrBlank()) {
                 val params = fragment.split("&").associate { param ->
@@ -82,7 +95,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // 2. Check Query Parameters (?access_token=... or ?code=...)
+            // Check Query Parameters (?access_token=... or ?code=...)
             if (token.isNullOrBlank()) {
                 token = uri.getQueryParameter("access_token") ?: uri.getQueryParameter("code")
             }

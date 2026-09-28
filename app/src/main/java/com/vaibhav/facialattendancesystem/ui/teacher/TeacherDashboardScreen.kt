@@ -73,9 +73,6 @@ fun TeacherDashboardScreen(
 
     LaunchedEffect(teacherId) {
         if (teacherId.isNotBlank()) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
-            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, teacherId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -152,7 +149,6 @@ fun TeacherDashboardScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .statusBarsPadding()
                     .padding(top = 8.dp, start = 16.dp, end = 16.dp, bottom = 8.dp)
             ) {
                 // ── Top Bar ───────────────────────────────────────────
@@ -318,8 +314,14 @@ fun TeacherSidebarContent(
     onProfile: () -> Unit,
     onLogout: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxHeight().padding(16.dp)) {
-        Spacer(modifier = Modifier.height(16.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(16.dp)
+    ) {
+        Spacer(modifier = Modifier.height(8.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (profileBitmap != null) {
@@ -554,7 +556,7 @@ fun CreateClassDialog(
                 OutlinedTextField(
                     value = className,
                     onValueChange = { className = it },
-                    label = { Text("Subject (e.g. ML fundamentals)") },
+                    label = { Text("Class name (e.g. ML Fundamentals)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     shape = RoundedCornerShape(10.dp),
@@ -563,7 +565,7 @@ fun CreateClassDialog(
                 OutlinedTextField(
                     value = subject,
                     onValueChange = { subject = it },
-                    label = { Text("Department (e.g. CSE)") },
+                    label = { Text("Subject / Dept (e.g. CSE)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     shape = RoundedCornerShape(10.dp),

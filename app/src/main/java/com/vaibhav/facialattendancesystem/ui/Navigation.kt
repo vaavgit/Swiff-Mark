@@ -139,10 +139,17 @@ private fun generateClassCode(subject: String): String {
     return "$prefix-$randomDigits"
 }
 
+private fun sha256(input: String): String {
+    val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
 @Composable
 fun AppNavigation(
     recoveryToken: String? = null,
-    onClearRecoveryToken: () -> Unit = {}
+    onClearRecoveryToken: () -> Unit = {},
+    targetClass: Pair<String, String>? = null,
+    onClearTargetClass: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val db = remember { AppDatabase.getDatabase(context) }
@@ -175,6 +182,18 @@ fun AppNavigation(
     }
 
     val savedSession = remember { sessionManager.getSession() }
+
+    LaunchedEffect(targetClass) {
+        if (targetClass != null && savedSession != null) {
+            val (classId, className) = targetClass
+            if (savedSession.userRole == "STUDENT") {
+                navController.navigate(Screen.StudentClassAttendance.createRoute(classId, className))
+            } else if (savedSession.userRole == "TEACHER") {
+                navController.navigate(Screen.AttendanceHistory.createRoute(classId, className))
+            }
+            onClearTargetClass()
+        }
+    }
     val savedToken = remember { sessionManager.getAccessToken() }
     LaunchedEffect(savedToken) {
         if (!savedToken.isNullOrBlank()) {
@@ -253,18 +272,19 @@ fun AppNavigation(
 
                                     // Check or insert User record in local Room DB keyed by Supabase UUID
                                     var localUser = db.userDao().getUserByEmail(email)
+                                    val passwordHash = sha256(password)
                                     if (localUser == null) {
                                         localUser = User(
                                             userId = authResult.userId,
                                             email = authResult.email,
-                                            passwordHash = password,
+                                            passwordHash = passwordHash,
                                             userType = roleUpper,
                                             name = authResult.fullName
                                         )
                                         db.userDao().insertUser(localUser)
-                                    } else if (localUser.passwordHash != password) {
-                                        // Update local cached password if changed remotely
-                                        db.userDao().insertUser(localUser.copy(passwordHash = password))
+                                    } else if (localUser.passwordHash != passwordHash) {
+                                        // Update local cached password hash if changed remotely
+                                        db.userDao().insertUser(localUser.copy(passwordHash = passwordHash))
                                     }
 
                                     if (isTeacher) {
@@ -337,7 +357,10 @@ fun AppNavigation(
                                                 rollOrSubject = student.rollNumber.toString(),
                                                 sectionOrDept = student.classSection ?: ""
                                             )
-                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(student.studentId, db, context, notify = true)
+                                            // Sync classes first so dashboard isn't empty on new device
+                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(student.studentId, db, sessionManager)
+                                            // notify=false on login — notifications should only come from WorkManager background sync
+                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(student.studentId, db, context, notify = false)
                                         }
 
                                         withContext(Dispatchers.Main) {
@@ -365,9 +388,16 @@ fun AppNavigation(
                                     // Offline fallback: If network failure, check local Room DB
                                     val isNetworkErr = authResult.message.contains("Network", ignoreCase = true) ||
                                             authResult.message.contains("Unable to resolve host", ignoreCase = true) ||
-                                            authResult.message.contains("503", ignoreCase = true)
+                                            authResult.message.contains("503", ignoreCase = true) ||
+                                            authResult.message.contains("timeout", ignoreCase = true) ||
+                                            authResult.message.contains("connection", ignoreCase = true)
                                     val localUser = db.userDao().getUserByEmail(email)
-                                    if (isNetworkErr && localUser != null && localUser.passwordHash == password) {
+                                    val hashedInput = sha256(password)
+                                    val passwordMatches = localUser != null && (localUser.passwordHash == hashedInput || localUser.passwordHash == password)
+                                    if (isNetworkErr && passwordMatches && localUser != null) {
+                                        if (localUser.passwordHash != hashedInput) {
+                                            db.userDao().insertUser(localUser.copy(passwordHash = hashedInput))
+                                        }
                                         sessionManager.saveLoginCredentials(email, password, isTeacher, saveLogin)
                                         if (isTeacher) {
                                             val teacher = db.teacherDao().getTeacherByUserId(localUser.userId)
@@ -461,7 +491,7 @@ fun AppNavigation(
                                     }
                                 }
                                 is AuthResult.Success -> {
-                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = pass, userType = "STUDENT", name = name)
+                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = sha256(pass), userType = "STUDENT", name = name)
                                     db.userDao().insertUser(newUser)
                                     val student = Student(
                                         studentId = authResult.userId,
@@ -527,7 +557,7 @@ fun AppNavigation(
                                     }
                                 }
                                 is AuthResult.Success -> {
-                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = pass, userType = "TEACHER", name = name)
+                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = sha256(pass), userType = "TEACHER", name = name)
                                     db.userDao().insertUser(newUser)
                                     val teacher = Teacher(
                                         teacherId = authResult.userId,
@@ -656,6 +686,7 @@ fun AppNavigation(
                     studentName = studentName,
                     onEnrollmentComplete = { capturedSteps, averagedVector ->
                         scope.launch(Dispatchers.IO) {
+                            db.faceEmbeddingDao().deleteEmbeddingsForStudent(studentId)
                             val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
                             val embeddings = capturedSteps.map { step ->
                                 FaceEmbedding(
@@ -905,7 +936,7 @@ fun AppNavigation(
 
                 val enrolledCountsMap = remember(classes, allEnrollments) {
                     classes.associate { clazz ->
-                        clazz.classId to allEnrollments.count { it.classId == clazz.classId }
+                        clazz.classId to allEnrollments.count { it.classId == clazz.classId && it.enrollmentVerified == 1 }
                     }
                 }
                 val lecturesCountsMap = remember(classes, allSessions) {
@@ -1342,9 +1373,9 @@ fun AppNavigation(
                                     sessionId = sessionId,
                                     classId = classId,
                                     photo1Path = p1Path,
-                                    photo1FacesDetected = presentStudentIds.size,
+                                    photo1FacesDetected = enrolledStudents.size,  // total enrolled, not just present
                                     photo2Path = p2Path,
-                                    photo2FacesDetected = presentStudentIds.size,
+                                    photo2FacesDetected = enrolledStudents.size,
                                     sessionStatus = "COMPLETED"
                                 )
                                 db.attendanceDao().insertSession(session)
@@ -1444,7 +1475,8 @@ fun AppNavigation(
                     val currentSession = sessionManager.getSession()
                     if (currentSession?.userRole == "STUDENT") {
                         scope.launch(Dispatchers.IO) {
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(currentSession.userId, db, context)
+                            // notify=false — don't fire system notifications from the history screen
+                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(currentSession.userId, db, context, notify = false)
                         }
                     }
                 }
@@ -1570,9 +1602,9 @@ fun AppNavigation(
                     syncAttendance()
                 }
 
-                val teacherUserFlow = remember(currentClass?.teacherId) {
-                    val tId = currentClass?.teacherId ?: ""
-                    db.userDao().getUserByIdFlow(tId)
+                val teacherId = currentClass?.teacherId ?: ""
+                val teacherUserFlow = remember(teacherId) {
+                    db.userDao().getUserByIdFlow(teacherId)
                 }
                 val teacherUser by teacherUserFlow.collectAsState(initial = null)
 
@@ -1644,7 +1676,7 @@ fun AppNavigation(
         InAppBanner(
             bannerData = bannerData,
             onDismiss = { bannerData = null },
-            modifier = Modifier.align(Alignment.BottomCenter)
+            modifier = Modifier.align(Alignment.TopCenter)
         )
     }
 }

@@ -112,22 +112,10 @@ object CloudSyncManager {
             }
         }
 
-        // 3. Try cached user record in local Room database
-        val database = dbRef
-        if (database != null && session != null) {
-            try {
-                val localUser = database.userDao().getUserById(session.userId)
-                    ?: database.userDao().getUserByEmail(session.userEmail)
-                if (localUser != null && localUser.email.isNotBlank() && localUser.passwordHash.isNotBlank()) {
-                    val reSigned = SupabaseAuthManager.signInBlocking(localUser.email, localUser.passwordHash)
-                    if (reSigned != null) {
-                        sm.updateTokens(reSigned.first, reSigned.second)
-                        authToken = reSigned.first
-                        return reSigned.first
-                    }
-                }
-            } catch (_: Exception) {}
-        }
+        // 3. Cannot use Room DB passwordHash for Supabase re-auth — it is SHA-256 hashed (for local
+        //    offline login only). Supabase requires the original plaintext password which we do NOT
+        //    store. Steps 1 (refresh_token) and 2 (saved credentials in SharedPrefs) are the only
+        //    recovery paths.
 
         // 4. Clear expired token so fallback to SUPABASE_ANON_KEY can be attempted
         sm.updateAccessToken(null)
@@ -417,7 +405,7 @@ object CloudSyncManager {
                 put("session_id", session.sessionId); put("class_id", session.classId); put("teacher_id", teacherId); put("session_date", dateStr)
                 put("photo1_faces_detected", session.photo1FacesDetected); put("photo2_faces_detected", session.photo2FacesDetected); put("session_status", session.sessionStatus)
             }
-            executeRequest("/rest/v1/attendance_sessions", "POST", sessionJson.toString(),
+            executeRequest("/rest/v1/attendance_sessions?on_conflict=session_id", "POST", sessionJson.toString(),
                 mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
             
             val recordsArray = JSONArray()
@@ -426,7 +414,7 @@ object CloudSyncManager {
                     put("session_id", r.sessionId); put("student_id", r.studentId); put("marked_present", r.markedPresent == 1)
                 })
             }
-            executeRequest("/rest/v1/attendance_records", "POST", recordsArray.toString(), mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
+            executeRequest("/rest/v1/attendance_records?on_conflict=session_id,student_id", "POST", recordsArray.toString(), mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
             true
         } catch (e: Exception) { false }
     }
@@ -557,7 +545,6 @@ object CloudSyncManager {
 
             // Sync student's own profile & avatar (upload if local exists, else download from cloud)
             contextRef?.let { ctx ->
-                purgeAutoFaceAvatarsOnce(ctx)
                 val localAvatar = java.io.File(ctx.filesDir, "avatar_${studentId}.jpg")
                 if (localAvatar.exists() && localAvatar.length() > 0L) {
                     uploadProfileAvatar(ctx, studentId)
@@ -600,6 +587,7 @@ object CloudSyncManager {
                     ))
                 }
                 db.classEnrollmentDao().enrollStudent(ClassEnrollment(classId = classId, studentId = studentId, enrollmentVerified = 1))
+                db.classEnrollmentDao().updateEnrollmentStatus(classId, studentId, 1)
             }
 
             // Fetch teacher profiles & avatars for all joined classes so student sees teacher name & photo
@@ -1018,7 +1006,6 @@ object CloudSyncManager {
      */
     suspend fun uploadProfileAvatar(context: android.content.Context, userId: String): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseConfig.isConfigured || userId.isBlank()) return@withContext false
-        purgeAutoFaceAvatarsOnce(context)
         try {
             val file = java.io.File(context.filesDir, "avatar_${userId}.jpg")
             if (!file.exists() || file.length() == 0L) return@withContext false
@@ -1098,7 +1085,6 @@ object CloudSyncManager {
      */
     suspend fun downloadAndCacheProfileAvatar(context: android.content.Context, userId: String, forceRefresh: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseConfig.isConfigured || userId.isBlank()) return@withContext false
-        purgeAutoFaceAvatarsOnce(context)
         val targetFile = java.io.File(context.filesDir, "avatar_${userId}.jpg")
         if (!forceRefresh && targetFile.exists() && targetFile.length() > 0L) {
             return@withContext true
@@ -1144,29 +1130,40 @@ object CloudSyncManager {
     /**
      * One-time cleanup that removes any face enrollment photos that were previously
      * auto-copied into avatar_<userId>.jpg or profiles.avatar_url.
+     *
+     * Scoped to the CURRENT USER only — does NOT touch other users' files or cloud data.
      */
+    @Volatile private var purgeInProgress = false
+
     suspend fun purgeAutoFaceAvatarsOnce(context: android.content.Context) = withContext(Dispatchers.IO) {
         try {
             val prefs = context.getSharedPreferences("facial_attendance_session", android.content.Context.MODE_PRIVATE)
             if (prefs.getBoolean("auto_face_avatars_purged_v3", false)) return@withContext
+            // In-memory guard to prevent concurrent executions racing before prefs is written
+            if (purgeInProgress) return@withContext
+            purgeInProgress = true
 
-            // Delete all local avatar_*.jpg files that were auto-populated from face scans
-            context.filesDir.listFiles()?.forEach { file ->
-                if (file.name.startsWith("avatar_") && file.name.endsWith(".jpg")) {
-                    file.delete()
+            try {
+                // Only delete the current user's own avatar file (not all users' cached avatars)
+                val currentUserId = sessionManagerRef?.getSession()?.userId
+                if (!currentUserId.isNullOrBlank()) {
+                    val ownFile = java.io.File(context.filesDir, "avatar_${currentUserId}.jpg")
+                    if (ownFile.exists()) ownFile.delete()
                 }
-            }
 
-            // Clear avatar_url on Supabase profiles so cloud sync won't re-download old face-scan avatars
-            if (SupabaseConfig.isConfigured) {
-                val zeroUuid = "00000000-0000-0000-0000-000000000000"
-                val clearJson = JSONObject().apply { put("avatar_url", JSONObject.NULL) }.toString()
-                executeRequest("/rest/v1/profiles?id=neq.$zeroUuid", "PATCH", clearJson)
-            }
+                // Clear avatar_url only on the current user's Supabase profile row
+                if (SupabaseConfig.isConfigured && !currentUserId.isNullOrBlank()) {
+                    val clearJson = JSONObject().apply { put("avatar_url", JSONObject.NULL) }.toString()
+                    executeRequest("/rest/v1/profiles?id=eq.$currentUserId", "PATCH", clearJson)
+                }
 
-            prefs.edit().putBoolean("auto_face_avatars_purged_v3", true).commit()
-            com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.notifyAvatarChanged()
+                prefs.edit().putBoolean("auto_face_avatars_purged_v3", true).commit()
+                com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.notifyAvatarChanged()
+            } finally {
+                purgeInProgress = false
+            }
         } catch (e: Exception) {
+            purgeInProgress = false
             e.printStackTrace()
         }
     }

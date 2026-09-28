@@ -77,6 +77,9 @@ class FaceClassifierHelper(private val context: Context) {
 
         val intValues = IntArray(inputSize * inputSize)
         resizedBitmap.getPixels(intValues, 0, inputSize, 0, 0, inputSize, inputSize)
+        if (resizedBitmap != faceBitmap) {
+            try { resizedBitmap.recycle() } catch (_: Exception) {}
+        }
 
         for (pixelValue in intValues) {
             val r = (pixelValue shr 16 and 0xFF)

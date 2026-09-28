@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -77,7 +78,6 @@ import com.vaibhav.facialattendancesystem.ui.components.AttendanceCameraHelper
 import com.vaibhav.facialattendancesystem.ui.theme.ErrorRose
 import com.vaibhav.facialattendancesystem.ui.theme.PrimaryCyan
 import com.vaibhav.facialattendancesystem.ui.theme.SuccessGreen
-import com.vaibhav.facialattendancesystem.ui.theme.TextSecondary
 import com.vaibhav.facialattendancesystem.ui.theme.WarningAmber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -253,7 +253,7 @@ fun ClassroomAttendanceScreen(
             },
             dismissButton = {
                 TextButton(onClick = { clearDraft(prefs, classId); showResume = false }) {
-                    Text("START FRESH", color = TextSecondary)
+                    Text("START FRESH", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         )
@@ -270,11 +270,23 @@ fun ClassroomAttendanceScreen(
                 onCancel    = onCancel,
                 onCaptureBitmap = { bitmap ->
                     isProcessing = true
-                    scope.launch(Dispatchers.Default) {
-                        val results = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_1", recognitionLogDao)
+                    scope.launch(Dispatchers.IO) {
+                        // Save bitmap to disk so photo1Path refers to a real file
+                        val savedPath = try {
+                            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+                            val file = java.io.File(dir, "photo_1_${System.currentTimeMillis()}.jpg")
+                            java.io.FileOutputStream(file).use { out ->
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                            }
+                            file.absolutePath
+                        } catch (e: Exception) { "photo_1_${System.currentTimeMillis()}.jpg" }
+                        val results = withContext(Dispatchers.Default) {
+                            processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_1", recognitionLogDao)
+                        }
+                        try { bitmap.recycle() } catch (_: Exception) {}
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
-                            photo1Path = "photo_1_${System.currentTimeMillis()}.jpg"
+                            photo1Path = savedPath
                             photo1Statuses.clear()
                             photo1Statuses.addAll(statuses)
                             isProcessing = false
@@ -319,11 +331,23 @@ fun ClassroomAttendanceScreen(
                 onCancel     = { stage = AttendanceCaptureStage.SESSION_SAVED },
                 onCaptureBitmap = { bitmap ->
                     isProcessing = true
-                    scope.launch(Dispatchers.Default) {
-                        val results = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_2", recognitionLogDao)
+                    scope.launch(Dispatchers.IO) {
+                        // Save bitmap to disk so photo2Path refers to a real file
+                        val savedPath = try {
+                            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+                            val file = java.io.File(dir, "photo_2_${System.currentTimeMillis()}.jpg")
+                            java.io.FileOutputStream(file).use { out ->
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                            }
+                            file.absolutePath
+                        } catch (e: Exception) { "photo_2_${System.currentTimeMillis()}.jpg" }
+                        val results = withContext(Dispatchers.Default) {
+                            processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_2", recognitionLogDao)
+                        }
+                        try { bitmap.recycle() } catch (_: Exception) {}
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
-                            photo2Path = "photo_2_${System.currentTimeMillis()}.jpg"
+                            photo2Path = savedPath
                             photo2Statuses.clear()
                             photo2Statuses.addAll(statuses)
                             isProcessing = false
@@ -439,6 +463,7 @@ fun CapturePhotoStepView(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(top = 16.dp, start = 16.dp, end = 16.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -454,7 +479,7 @@ fun CapturePhotoStepView(
             Spacer(modifier = Modifier.width(10.dp))
             Column {
                 Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                Text(subtitle, fontSize = 12.sp, color = TextSecondary)
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -512,7 +537,7 @@ fun CapturePhotoStepView(
                 onClick = onCancel,
                 shape   = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f).height(52.dp)
-            ) { Text("CANCEL", color = TextSecondary) }
+            ) { Text("CANCEL", color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
             Button(
                 onClick = {
@@ -520,7 +545,9 @@ fun CapturePhotoStepView(
                         inFlight = true
                         cameraHelper.capturePhoto { bitmap ->
                             inFlight = false
-                            onCaptureBitmap(bitmap)
+                            if (bitmap != null) {
+                                onCaptureBitmap(bitmap)
+                            }
                         }
                     }
                 },
@@ -558,10 +585,11 @@ fun StudentRosterReviewView(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(16.dp)
     ) {
         Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = PrimaryCyan)
-        Text(photoLabel, fontSize = 13.sp, color = TextSecondary, modifier = Modifier.padding(bottom = 10.dp))
+        Text(photoLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 10.dp))
 
         // Quick stats row
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -579,7 +607,7 @@ fun StudentRosterReviewView(
         }
 
         Spacer(modifier = Modifier.height(6.dp))
-        Text("Tap any row to toggle Present ↔ Absent", fontSize = 11.sp, color = TextSecondary)
+        Text("Tap any row to toggle Present ↔ Absent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(8.dp))
 
         LazyColumn(
@@ -711,6 +739,7 @@ fun SessionSavedView(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -722,7 +751,7 @@ fun SessionSavedView(
         Text(
             text      = "$presentCount of $totalStudents students detected at class start.",
             fontSize  = 15.sp,
-            color     = TextSecondary,
+            color     = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
 
@@ -736,10 +765,10 @@ fun SessionSavedView(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("What happens next?", fontWeight = FontWeight.Bold, color = PrimaryCyan, fontSize = 15.sp)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("1. Close this app and teach normally", fontSize = 13.sp, color = TextSecondary)
-                Text("2. Re-open app at end of class", fontSize = 13.sp, color = TextSecondary)
-                Text("3. Tap your class → Resume session", fontSize = 13.sp, color = TextSecondary)
-                Text("4. Capture Photo 2 → app marks attendance", fontSize = 13.sp, color = TextSecondary)
+                Text("1. Close this app and teach normally", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("2. Re-open app at end of class", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("3. Tap your class → Resume session", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("4. Capture Photo 2 → app marks attendance", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -758,7 +787,7 @@ fun SessionSavedView(
             onClick  = onCloseApp,
             shape    = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().height(54.dp)
-        ) { Text("SAVE & CLOSE — RETURN LATER", color = TextSecondary, fontWeight = FontWeight.SemiBold) }
+        ) { Text("SAVE & CLOSE — RETURN LATER", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold) }
     }
 }
 
@@ -801,10 +830,11 @@ fun FinalSummaryView(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(16.dp)
     ) {
         Text("Attendance Summary", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = PrimaryCyan)
-        Text(className, fontSize = 14.sp, color = TextSecondary)
+        Text(className, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(10.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -837,7 +867,7 @@ fun FinalSummaryView(
                     FinalSectionHeader("⚠ Seen in Photo 1 only — Left Early? (${photo1Only.size})", WarningAmber)
                     Text(
                         "Toggle each student: Present (left early) or Absent",
-                        fontSize = 11.sp, color = TextSecondary,
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
@@ -860,7 +890,7 @@ fun FinalSummaryView(
                     FinalSectionHeader("⚠ Seen in Photo 2 only — Late Arrival? (${photo2Only.size})", WarningAmber)
                     Text(
                         "Toggle each student: Present (arrived late) or Absent",
-                        fontSize = 11.sp, color = TextSecondary,
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
@@ -897,7 +927,7 @@ fun FinalSummaryView(
                 onClick  = onRetake,
                 shape    = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f).height(52.dp)
-            ) { Text("RETAKE", color = TextSecondary) }
+            ) { Text("RETAKE", color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
             Button(
                 onClick  = { onConfirm(finalPresentIds) },
@@ -938,7 +968,7 @@ private fun FinalStudentRow(student: Student, status: String, statusColor: Color
                 fontSize   = 14.sp,
                 color      = MaterialTheme.colorScheme.onSurface
             )
-            Text(student.classSection ?: "General", fontSize = 11.sp, color = TextSecondary)
+            Text(student.classSection ?: "General", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(status, color = statusColor, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     }
@@ -1001,6 +1031,7 @@ private fun processPhoto(
         val faceIndex = index + 1
         val alignedChip = FaceAligner.align(bitmap, face)
         val queryEmbedding = classifier.getFaceEmbedding(alignedChip)
+        try { if (alignedChip != bitmap) alignedChip.recycle() } catch (_: Exception) {}
 
         val startMs = System.currentTimeMillis()
         val sortedCandidates = FaceMath.findCandidatesForFace(queryEmbedding, allEmbeddings)

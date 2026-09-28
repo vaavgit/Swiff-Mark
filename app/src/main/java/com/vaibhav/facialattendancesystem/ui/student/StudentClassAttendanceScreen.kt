@@ -109,7 +109,7 @@ fun StudentClassAttendanceScreen(
 
     val totalConducted = sessions.size
     val attendedCount = records.count { it.markedPresent == 1 }
-    val pct = if (totalConducted > 0) (attendedCount * 100) / totalConducted else 100
+    val pct = if (totalConducted > 0) (attendedCount * 100) / totalConducted else 0
 
     Column(
         modifier = Modifier
@@ -238,8 +238,8 @@ fun StudentClassAttendanceScreen(
                 }
 
                 StatusPill(
-                    text = "$pct% Attendance",
-                    color = if (pct >= 75) SuccessGreen else ErrorRose
+                    text = if (totalConducted > 0) "$pct% Attendance" else "No Lectures",
+                    color = if (totalConducted == 0) MaterialTheme.colorScheme.onSurfaceVariant else if (pct >= 75) SuccessGreen else ErrorRose
                 )
             }
         }

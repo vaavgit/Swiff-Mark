@@ -63,9 +63,6 @@ fun StudentProfileScreen(
 
     LaunchedEffect(student.studentId) {
         if (student.studentId.isNotBlank()) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
-            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -99,6 +96,7 @@ fun StudentProfileScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(top = 20.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)
             .verticalScroll(rememberScrollState())
     ) {

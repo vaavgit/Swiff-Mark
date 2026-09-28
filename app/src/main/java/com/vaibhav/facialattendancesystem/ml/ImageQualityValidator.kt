@@ -43,6 +43,9 @@ object ImageQualityValidator {
 
         val sharpness = calculateSharpness(croppedBitmap)
         val brightness = calculateBrightness(croppedBitmap)
+        if (faceBox != null && croppedBitmap != bitmap) {
+            try { croppedBitmap.recycle() } catch (_: Exception) {}
+        }
 
         val isSharp = sharpness >= 30.0f
         val isBrightnessOk = brightness in 35.0f..225.0f

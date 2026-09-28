@@ -2,7 +2,7 @@
 
 > Smarter classroom attendance using face recognition. No roll call shouting, no paper sheets, no proxy attendance.
 
-[![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.0.0-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
+[![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.1.3-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
 
 [![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9+-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)

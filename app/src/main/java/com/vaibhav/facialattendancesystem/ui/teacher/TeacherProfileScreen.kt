@@ -67,9 +67,6 @@ fun TeacherProfileScreen(
 
     LaunchedEffect(actualTeacherId) {
         if (actualTeacherId.isNotBlank()) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
-            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -103,6 +100,7 @@ fun TeacherProfileScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            .navigationBarsPadding()
             .padding(top = 20.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)
             .verticalScroll(rememberScrollState())
     ) {

@@ -70,9 +70,6 @@ fun StudentDashboardScreen(
 
     LaunchedEffect(student.studentId) {
         if (student.studentId.isNotBlank()) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
-            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -117,7 +114,7 @@ fun StudentDashboardScreen(
     val totalPresent = attendanceFeed.count { it.markedPresent == 1 }
     val totalSessions = attendanceFeed.size
     val semesterPct = if (totalSessions > 0) (totalPresent.toFloat() / totalSessions * 100).toInt() else 0
-    val semesterFraction = if (totalSessions > 0) totalPresent.toFloat() / totalSessions else 1f
+    val semesterFraction = if (totalSessions > 0) totalPresent.toFloat() / totalSessions else 0f
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -156,7 +153,6 @@ fun StudentDashboardScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .statusBarsPadding()
                     .padding(top = 8.dp, start = 16.dp, end = 16.dp, bottom = 8.dp)
             ) {
                 // ── Top Bar ───────────────────────────────────────────
@@ -298,9 +294,10 @@ fun StudentDashboardScreen(
                             val classFeed = attendanceFeed.filter { it.classId == clazz.classId }
                             val total = classFeed.size
                             val presentCount = classFeed.count { it.markedPresent == 1 }
-                            val pctFloat = if (total > 0) presentCount.toFloat() / total else 1f
+                            val pctFloat = if (total > 0) presentCount.toFloat() / total else 0f
                             val pctInt = (pctFloat * 100).toInt()
                             val progressColor = when {
+                                total == 0 -> MaterialTheme.colorScheme.outlineVariant
                                 pctFloat >= 0.75f -> SuccessGreen
                                 pctFloat >= 0.50f -> WarningAmber
                                 else -> ErrorRose
@@ -451,6 +448,7 @@ fun StudentDashboardScreen(
 @Composable
 fun AttendanceRing(fraction: Float, pct: Int) {
     val ringColor = when {
+        fraction <= 0f -> MaterialTheme.colorScheme.outlineVariant
         fraction >= 0.75f -> SuccessGreen
         fraction >= 0.50f -> WarningAmber
         else -> ErrorRose
@@ -483,8 +481,14 @@ fun StudentSidebarContent(
     onProfile: () -> Unit,
     onLogout: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxHeight().padding(16.dp)) {
-        Spacer(modifier = Modifier.height(16.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(16.dp)
+    ) {
+        Spacer(modifier = Modifier.height(8.dp))
 
         // User header
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -591,7 +595,7 @@ fun JoinClassDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Enter the 6-character join code provided by your teacher (e.g. ML-4821):",
+                    text = "Enter the class code provided by your teacher (e.g. CS-4821):",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

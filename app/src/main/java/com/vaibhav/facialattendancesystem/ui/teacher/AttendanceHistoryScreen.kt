@@ -165,8 +165,17 @@ fun AttendanceHistoryScreen(
                                         fontSize = 13.sp
                                     )
                                     StatusPill(
-                                        text = "Completed",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = when (session.sessionStatus) {
+                                            "COMPLETED" -> "✓ Completed"
+                                            "IN_PROGRESS" -> "⏳ In Progress"
+                                            "DRAFT" -> "📝 Draft"
+                                            else -> session.sessionStatus
+                                        },
+                                        color = when (session.sessionStatus) {
+                                            "COMPLETED" -> SuccessGreen
+                                            "IN_PROGRESS" -> WarningAmber
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))

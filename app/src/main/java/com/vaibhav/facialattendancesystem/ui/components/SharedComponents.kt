@@ -129,6 +129,7 @@ fun ConfidenceBadge(name: String, confidencePct: Int) {
 @Composable
 fun AttendanceProgressBar(percent: Float) {
     val color = when {
+        percent <= 0f    -> MaterialTheme.colorScheme.outlineVariant
         percent >= 0.75f -> SuccessGreen
         percent >= 0.50f -> WarningAmber
         else             -> ErrorRose

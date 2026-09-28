@@ -59,14 +59,9 @@ import com.vaibhav.facialattendancesystem.ml.FaceQualityMetrics
 import com.vaibhav.facialattendancesystem.ml.ImageQualityValidator
 import com.vaibhav.facialattendancesystem.ui.components.CameraView
 import com.vaibhav.facialattendancesystem.ui.components.adaptiveBorderColor
-import com.vaibhav.facialattendancesystem.ui.theme.DarkBackground
 import com.vaibhav.facialattendancesystem.ui.theme.ErrorRose
 import com.vaibhav.facialattendancesystem.ui.theme.PrimaryCyan
 import com.vaibhav.facialattendancesystem.ui.theme.SuccessGreen
-import com.vaibhav.facialattendancesystem.ui.theme.SurfaceCard
-import com.vaibhav.facialattendancesystem.ui.theme.SurfaceDark
-import com.vaibhav.facialattendancesystem.ui.theme.TextPrimary
-import com.vaibhav.facialattendancesystem.ui.theme.TextSecondary
 import com.vaibhav.facialattendancesystem.ui.theme.WarningAmber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -162,7 +157,7 @@ fun StudentEnrollmentScreen(
             )
             Text(
                 text = studentName,
-                color = TextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp
             )
         }
@@ -179,7 +174,7 @@ fun StudentEnrollmentScreen(
                         .clip(CircleShape)
                         .background(
                             if (i <= currentStepIndex) PrimaryCyan
-                            else TextSecondary.copy(alpha = 0.3f)
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                         )
                 )
             }
@@ -318,7 +313,7 @@ fun StudentEnrollmentScreen(
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = PrimaryCyan,
-                disabledContainerColor = SurfaceCard
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
             ),
             modifier = Modifier
                 .fillMaxWidth()
@@ -331,7 +326,7 @@ fun StudentEnrollmentScreen(
                     text = if (primaryFace == null) "ALIGN FACE IN OVAL" else "MOVE CLOSER TO CAMERA",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
                 Text(
@@ -382,7 +377,7 @@ fun EnrollmentSummaryView(
         Text(
             text = "6 angles captured for $studentName",
             fontSize = 13.sp,
-            color = TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 20.dp)
         )
 

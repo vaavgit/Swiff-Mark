@@ -76,7 +76,9 @@ fun ClassDetailsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
                 shadowElevation = 8.dp,
                 color = MaterialTheme.colorScheme.background
             ) {

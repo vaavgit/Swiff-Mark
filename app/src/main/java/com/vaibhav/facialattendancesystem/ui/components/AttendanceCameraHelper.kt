@@ -161,11 +161,15 @@ class AttendanceCameraHelper(private val context: Context) {
 
     /**
      * Fires the full-resolution ImageCapture.  [onBitmapReady] is always invoked on the
-     * **main thread**.  If ImageCapture is not yet bound, the call is silently ignored.
+     * **main thread**.  Delivers null if capture fails or is not bound so caller can reset loading state.
      */
-    fun capturePhoto(onBitmapReady: (Bitmap) -> Unit) {
-        val capture = imageCapture ?: return
+    fun capturePhoto(onBitmapReady: (Bitmap?) -> Unit) {
+        val capture = imageCapture
         val mainExecutor = ContextCompat.getMainExecutor(context)
+        if (capture == null) {
+            mainExecutor.execute { onBitmapReady(null) }
+            return
+        }
 
         capture.takePicture(
             captureExecutor,
@@ -173,14 +177,13 @@ class AttendanceCameraHelper(private val context: Context) {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     val bitmap = image.toBitmapSafely(isFrontCamera)
                     image.close()
-                    if (bitmap != null) {
-                        // Deliver on main thread -- safe for Compose state updates
-                        mainExecutor.execute { onBitmapReady(bitmap) }
-                    }
+                    // Deliver on main thread -- safe for Compose state updates
+                    mainExecutor.execute { onBitmapReady(bitmap) }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     exception.printStackTrace()
+                    mainExecutor.execute { onBitmapReady(null) }
                 }
             }
         )

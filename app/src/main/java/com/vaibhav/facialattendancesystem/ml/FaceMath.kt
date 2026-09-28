@@ -174,6 +174,17 @@ object FaceMath {
         for (i in 0 until dimension) {
             result[i] /= count
         }
+
+        var norm = 0.0f
+        for (f in result) {
+            norm += f * f
+        }
+        norm = sqrt(norm)
+        if (norm > 0.0f) {
+            for (i in result.indices) {
+                result[i] /= norm
+            }
+        }
         return result
     }
 

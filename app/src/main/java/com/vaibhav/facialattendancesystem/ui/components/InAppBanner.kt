@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,9 +52,10 @@ val LocalBannerManager = staticCompositionLocalOf<(String, Boolean) -> Unit> {
 }
 
 /**
- * Modern floating bottom in-app banner with slide-up/fade animation.
- * Positions notifications gracefully at the bottom of the screen with
- * high-contrast visual styling matching both light and dark themes.
+ * Modern floating top in-app banner with slide-down/fade animation.
+ * Positions notifications gracefully at the top of the screen below status bars,
+ * preventing any overlap with bottom FABs, action bars, or navigation controls.
+ * Adapts high-contrast visual styling seamlessly across both light and dark themes.
  */
 @Composable
 fun InAppBanner(
@@ -71,26 +72,36 @@ fun InAppBanner(
 
     AnimatedVisibility(
         visible = bannerData != null,
-        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
         modifier = modifier
     ) {
         bannerData?.let { data ->
+            val isDark = isAppDarkTheme()
             val accentColor = if (data.isError) ErrorRose else SuccessGreen
-            val bgColor = if (data.isError) Color(0xFF221115) else Color(0xFF0D2218)
-            val borderColor = accentColor.copy(alpha = 0.65f)
+            val bgColor = if (isDark) {
+                if (data.isError) Color(0xFF221115) else Color(0xFF0D2218)
+            } else {
+                if (data.isError) Color(0xFFFFF1F2) else Color(0xFFF0FDF4)
+            }
+            val textColor = if (isDark) {
+                Color.White
+            } else {
+                if (data.isError) Color(0xFF9F1239) else Color(0xFF166534)
+            }
+            val borderColor = accentColor.copy(alpha = if (isDark) 0.65f else 0.45f)
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 20.dp),
-                contentAlignment = Alignment.BottomCenter
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.TopCenter
             ) {
                 Surface(
                     shape = RoundedCornerShape(18.dp),
                     color = bgColor,
-                    shadowElevation = 12.dp,
+                    shadowElevation = 10.dp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .border(1.5.dp, borderColor, RoundedCornerShape(18.dp))
@@ -104,7 +115,7 @@ fun InAppBanner(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(accentColor.copy(alpha = 0.25f)),
+                                .background(accentColor.copy(alpha = if (isDark) 0.25f else 0.15f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -119,7 +130,7 @@ fun InAppBanner(
 
                         Text(
                             text = data.message,
-                            color = Color.White,
+                            color = textColor,
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f)
