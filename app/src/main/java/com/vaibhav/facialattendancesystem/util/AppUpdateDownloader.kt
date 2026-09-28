@@ -94,21 +94,46 @@ object AppUpdateDownloader {
         onProgress: (Int) -> Unit
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
-            if (!apkUrl.endsWith(".apk", ignoreCase = true)) {
+            val targetDir = context.cacheDir
+            val apkFile = File(targetDir, "Swiff-Mark-update.apk")
+
+            // If the APK was already downloaded within the last 5 minutes (e.g. user just granted Install Unknown Apps permission), install immediately!
+            val now = System.currentTimeMillis()
+            if (apkFile.exists() && apkFile.length() > 20_000_000L && (now - apkFile.lastModified()) < 5 * 60 * 1000L) {
                 withContext(Dispatchers.Main) {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)).apply {
+                    onProgress(100)
+                    installApkFile(context, apkFile)
+                }
+                return@withContext Pair(true, "Opening installer...")
+            }
+
+            // Try ultra-fast local Wi-Fi server on dev PC (192.168.29.176:8888) first (finishes in ~2 seconds!)
+            val localWifiUrl = "http://192.168.29.176:8888/SwiffMark.apk"
+            var chosenUrl = apkUrl
+            try {
+                val testConn = URL(localWifiUrl).openConnection() as HttpURLConnection
+                testConn.requestMethod = "HEAD"
+                testConn.connectTimeout = 1200
+                testConn.readTimeout = 1200
+                if (testConn.responseCode in 200..299) {
+                    chosenUrl = localWifiUrl
+                }
+                testConn.disconnect()
+            } catch (_: Exception) {}
+
+            if (!chosenUrl.endsWith(".apk", ignoreCase = true)) {
+                withContext(Dispatchers.Main) {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(chosenUrl)).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(intent)
                 }
-                return@withContext Pair(true, "Opened release page in browser.")
+                return@withContext Pair(true, "Opened update page in browser.")
             }
 
-            val targetDir = context.cacheDir
-            val apkFile = File(targetDir, "Swiff-Mark-update.apk")
             if (apkFile.exists()) apkFile.delete()
 
-            var currentUrl = apkUrl
+            var currentUrl = chosenUrl
             var redirectCount = 0
             var connection: HttpURLConnection
 
