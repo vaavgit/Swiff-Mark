@@ -87,7 +87,8 @@ fun StudentClassAttendanceScreen(
     val timeFormat = remember { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
     val borderColor = adaptiveBorderColor()
 
-    val teacherAvatarBitmap = remember(teacherUserId) {
+    val avatarVer = ProfileImageHelper.avatarVersion
+    val teacherAvatarBitmap = remember(teacherUserId, avatarVer) {
         mutableStateOf<Bitmap?>(if (teacherUserId.isNotBlank()) ProfileImageHelper.loadProfileBitmap(context, teacherUserId) else null)
     }
     LaunchedEffect(teacherUserId) {
@@ -149,18 +150,31 @@ fun StudentClassAttendanceScreen(
                     modifier = Modifier.padding(top = 2.dp)
                 ) {
                     val bmp = teacherAvatarBitmap.value
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Teacher",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .border(0.8.dp, PrimaryCyan.copy(alpha = 0.5f), CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(PrimaryCyan.copy(alpha = 0.2f))
+                            .border(0.8.dp, PrimaryCyan.copy(alpha = 0.6f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "Teacher",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                            )
+                        } else {
+                            Text(
+                                text = ProfileImageHelper.getInitials(teacherName.ifBlank { "Teacher" }, "T"),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PrimaryCyan
+                            )
+                        }
                     }
+                    Spacer(modifier = Modifier.width(5.dp))
                     val subtitleText = when {
                         teacherName.isNotBlank() && subject.isNotBlank() -> "$subject · $teacherName"
                         teacherName.isNotBlank() -> "Faculty: $teacherName"

@@ -59,11 +59,17 @@ fun TeacherProfileScreen(
     var showPhotoDialog by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showPurgeDialog by remember { mutableStateOf(false) }
-    var profileBitmap by remember(actualTeacherId) { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)) }
+    val avatarVer = ProfileImageHelper.avatarVersion
+    var profileBitmap by remember(actualTeacherId, avatarVer) {
+        mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, actualTeacherId))
+    }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(actualTeacherId) {
         if (actualTeacherId.isNotBlank()) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
+            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -74,9 +80,7 @@ fun TeacherProfileScreen(
                 val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     CloudSyncManager.downloadAndCacheProfileAvatar(context, actualTeacherId)
                 }
-                if (downloaded) {
-                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
-                }
+                profileBitmap = if (downloaded) ProfileImageHelper.loadProfileBitmap(context, actualTeacherId) else null
             }
         }
     }
@@ -127,10 +131,7 @@ fun TeacherProfileScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val initials = currentName.split(" ")
-                .take(2)
-                .mapNotNull { it.firstOrNull()?.uppercaseChar() }
-                .joinToString("")
+            val initials = ProfileImageHelper.getInitials(currentName, "T")
 
             Box(
                 modifier = Modifier
@@ -350,11 +351,10 @@ fun TeacherProfileScreen(
             modifier = Modifier.fillMaxWidth().height(50.dp)
         ) {
             Text(
-                text = if (isUpdatingWirelessly) "Downloading Update Wirelessly ($wirelessUpdatePct%)..."
-                else "📲 Wireless App Update (v${com.vaibhav.facialattendancesystem.BuildConfig.VERSION_NAME})",
+                text = if (isUpdatingWirelessly) "Updating ($wirelessUpdatePct%)..." else "Update",
                 color = PrimaryCyan,
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.5.sp
+                fontSize = 14.sp
             )
         }
 

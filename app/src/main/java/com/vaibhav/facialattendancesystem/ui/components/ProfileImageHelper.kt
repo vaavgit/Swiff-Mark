@@ -4,11 +4,43 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.max
 
 object ProfileImageHelper {
+
+    /**
+     * Incremented whenever any profile image is saved, downloaded, or deleted
+     * so all active Compose tabs/windows re-read the updated avatar immediately.
+     */
+    var avatarVersion by mutableIntStateOf(0)
+        private set
+
+    fun notifyAvatarChanged() {
+        avatarVersion++
+    }
+
+    /**
+     * Computes first letters of First and Last name:
+     * e.g., "Vaibhav Verma" -> "VV", "Aarav Kumar Sharma" -> "AS", "Vaibhav" -> "V"
+     */
+    fun getInitials(fullName: String, fallback: String = "U"): String {
+        val parts = fullName.trim()
+            .split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it.any { ch -> ch.isLetterOrDigit() } }
+        if (parts.isEmpty()) return fallback
+        if (parts.size == 1) {
+            return parts[0].firstOrNull()?.uppercaseChar()?.toString() ?: fallback
+        }
+        val first = parts.first().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()
+        val last = parts.last().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()
+        return listOfNotNull(first, last).joinToString("").ifEmpty { fallback }
+    }
 
     fun getProfileImageFile(context: Context, userId: String): File {
         return File(context.filesDir, "avatar_${userId}.jpg")
@@ -60,6 +92,7 @@ object ProfileImageHelper {
                 scaled.recycle()
             }
             original.recycle()
+            notifyAvatarChanged()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -89,6 +122,7 @@ object ProfileImageHelper {
             if (scaled != bitmap) {
                 scaled.recycle()
             }
+            notifyAvatarChanged()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -99,7 +133,9 @@ object ProfileImageHelper {
     fun deleteProfileImage(context: Context, userId: String): Boolean {
         return try {
             val file = getProfileImageFile(context, userId)
-            if (file.exists()) file.delete() else true
+            val res = if (file.exists()) file.delete() else true
+            notifyAvatarChanged()
+            res
         } catch (e: Exception) {
             e.printStackTrace()
             false

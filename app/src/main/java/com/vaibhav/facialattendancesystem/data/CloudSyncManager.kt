@@ -557,6 +557,7 @@ object CloudSyncManager {
 
             // Sync student's own profile & avatar (upload if local exists, else download from cloud)
             contextRef?.let { ctx ->
+                purgeAutoFaceAvatarsOnce(ctx)
                 val localAvatar = java.io.File(ctx.filesDir, "avatar_${studentId}.jpg")
                 if (localAvatar.exists() && localAvatar.length() > 0L) {
                     uploadProfileAvatar(ctx, studentId)
@@ -1017,6 +1018,7 @@ object CloudSyncManager {
      */
     suspend fun uploadProfileAvatar(context: android.content.Context, userId: String): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseConfig.isConfigured || userId.isBlank()) return@withContext false
+        purgeAutoFaceAvatarsOnce(context)
         try {
             val file = java.io.File(context.filesDir, "avatar_${userId}.jpg")
             if (!file.exists() || file.length() == 0L) return@withContext false
@@ -1096,13 +1098,14 @@ object CloudSyncManager {
      */
     suspend fun downloadAndCacheProfileAvatar(context: android.content.Context, userId: String, forceRefresh: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseConfig.isConfigured || userId.isBlank()) return@withContext false
+        purgeAutoFaceAvatarsOnce(context)
         val targetFile = java.io.File(context.filesDir, "avatar_${userId}.jpg")
         if (!forceRefresh && targetFile.exists() && targetFile.length() > 0L) {
             return@withContext true
         }
 
         try {
-            // Strategy 1: Check profiles.avatar_url
+            // Strategy 1: Check profiles.avatar_url (ONLY explicitly user-uploaded profile photos)
             val (status, response) = executeRequest("/rest/v1/profiles?id=eq.$userId&select=avatar_url", "GET")
             if (status in 200..299 && response.isNotBlank()) {
                 val array = JSONArray(response)
@@ -1113,6 +1116,7 @@ object CloudSyncManager {
                         val decodedBytes = Base64.decode(base64Data, Base64.DEFAULT)
                         if (decodedBytes.isNotEmpty()) {
                             targetFile.writeBytes(decodedBytes)
+                            com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.notifyAvatarChanged()
                             return@withContext true
                         }
                     } else if (avatarUrl.startsWith("http")) {
@@ -1122,70 +1126,48 @@ object CloudSyncManager {
                         val bytes = connection.inputStream.use { it.readBytes() }
                         if (bytes.isNotEmpty()) {
                             targetFile.writeBytes(bytes)
+                            com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.notifyAvatarChanged()
                             return@withContext true
                         }
                     }
                 }
             }
 
-            // Strategy 2: Check Supabase Storage avatars bucket
-            try {
-                val liveToken2 = sessionManagerRef?.getAccessToken()?.ifBlank { null }
-                    ?: authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
-                val storageUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}/storage/v1/object/avatars/${userId}.jpg"
-
-                val connection = java.net.URL(storageUrl).openConnection() as java.net.HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 8000
-                connection.readTimeout = 12000
-                connection.setRequestProperty("apikey", SupabaseConfig.SUPABASE_ANON_KEY)
-                connection.setRequestProperty("Authorization", "Bearer $liveToken2")
-
-                val statusCode = try { connection.responseCode } catch (e: Exception) { 503 }
-                if (statusCode in 200..299) {
-                    val bytes = connection.inputStream.use { it.readBytes() }
-                    if (bytes.isNotEmpty()) {
-                        targetFile.writeBytes(bytes)
-                        return@withContext true
-                    }
-                }
-            } catch (_: Exception) {}
-
-            // Strategy 3: Fallback to enrolled frontal face photo in diagnostic calibration samples if available
-            // This restores profile pictures for existing students whose avatar_url was not yet populated
-            val diagPath = com.vaibhav.facialattendancesystem.BuildConfig.DIAGNOSTIC_SYNC_PATH
-            if (!diagPath.isNullOrBlank()) {
-                val (dStatus, dResp) = executeRequest("/rest/v1/$diagPath?student_id=eq.$userId&select=image_base64,angle_label&limit=5", "GET")
-                if (dStatus in 200..299 && dResp.isNotBlank()) {
-                    val dArray = JSONArray(dResp)
-                    if (dArray.length() > 0) {
-                        var chosenBase64 = ""
-                        for (i in 0 until dArray.length()) {
-                            val item = dArray.getJSONObject(i)
-                            val angle = item.optString("angle_label", "")
-                            val img = item.optString("image_base64", "")
-                            if (img.isNotBlank() && (chosenBase64.isEmpty() || angle.contains("FRONT", ignoreCase = true))) {
-                                chosenBase64 = img
-                            }
-                        }
-                        if (chosenBase64.isNotBlank()) {
-                            val cleanB64 = if (chosenBase64.contains("base64,")) chosenBase64.substringAfter("base64,") else chosenBase64
-                            val decoded = Base64.decode(cleanB64, Base64.DEFAULT)
-                            if (decoded.isNotEmpty()) {
-                                targetFile.writeBytes(decoded)
-                                // Backfill profiles.avatar_url so future lookups hit Strategy 1 directly
-                                uploadProfileAvatar(context, userId)
-                                return@withContext true
-                            }
-                        }
-                    }
-                }
-            }
-
+            // Never fall back to face enrollment photos! Default is blank with First+Last initials (e.g. VV).
             false
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        }
+    }
+
+    /**
+     * One-time cleanup that removes any face enrollment photos that were previously
+     * auto-copied into avatar_<userId>.jpg or profiles.avatar_url.
+     */
+    suspend fun purgeAutoFaceAvatarsOnce(context: android.content.Context) = withContext(Dispatchers.IO) {
+        try {
+            val prefs = context.getSharedPreferences("facial_attendance_session", android.content.Context.MODE_PRIVATE)
+            if (prefs.getBoolean("auto_face_avatars_purged_v3", false)) return@withContext
+
+            // Delete all local avatar_*.jpg files that were auto-populated from face scans
+            context.filesDir.listFiles()?.forEach { file ->
+                if (file.name.startsWith("avatar_") && file.name.endsWith(".jpg")) {
+                    file.delete()
+                }
+            }
+
+            // Clear avatar_url on Supabase profiles so cloud sync won't re-download old face-scan avatars
+            if (SupabaseConfig.isConfigured) {
+                val zeroUuid = "00000000-0000-0000-0000-000000000000"
+                val clearJson = JSONObject().apply { put("avatar_url", JSONObject.NULL) }.toString()
+                executeRequest("/rest/v1/profiles?id=neq.$zeroUuid", "PATCH", clearJson)
+            }
+
+            prefs.edit().putBoolean("auto_face_avatars_purged_v3", true).commit()
+            com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.notifyAvatarChanged()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 

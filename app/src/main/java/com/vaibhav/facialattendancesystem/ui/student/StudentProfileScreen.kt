@@ -55,11 +55,17 @@ fun StudentProfileScreen(
 
     var showEditDialog by remember { mutableStateOf(false) }
     var showPhotoDialog by remember { mutableStateOf(false) }
-    var profileBitmap by remember(student.studentId) { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId)) }
+    val avatarVer = ProfileImageHelper.avatarVersion
+    var profileBitmap by remember(student.studentId, avatarVer) {
+        mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
+    }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(student.studentId) {
         if (student.studentId.isNotBlank()) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
+            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -70,9 +76,7 @@ fun StudentProfileScreen(
                 val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
                 }
-                if (downloaded) {
-                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
-                }
+                profileBitmap = if (downloaded) ProfileImageHelper.loadProfileBitmap(context, student.studentId) else null
             }
         }
     }
@@ -123,10 +127,7 @@ fun StudentProfileScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            val initials = currentFullName.split(" ")
-                .take(2)
-                .mapNotNull { it.firstOrNull()?.uppercaseChar() }
-                .joinToString("")
+            val initials = ProfileImageHelper.getInitials(currentFullName, "S")
 
             Box(
                 modifier = Modifier
@@ -347,8 +348,7 @@ fun StudentProfileScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = if (isUpdatingWirelessly) "DOWNLOADING UPDATE ($wirelessUpdatePct%)..."
-                        else "📲 WIRELESS APP UPDATE (v${com.vaibhav.facialattendancesystem.BuildConfig.VERSION_NAME})",
+                        text = if (isUpdatingWirelessly) "Updating ($wirelessUpdatePct%)..." else "Update",
                         fontWeight = FontWeight.Bold,
                         color = PrimaryCyan
                     )

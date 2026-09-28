@@ -185,6 +185,7 @@ fun AppNavigation(
     var availableUpdate by remember { mutableStateOf<Triple<String, String, String>?>(null) }
 
     LaunchedEffect(Unit) {
+        com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
         if (!sessionManager.isTestDataPurged()) {
             withContext(Dispatchers.IO) {
                 try {
@@ -682,15 +683,6 @@ fun AppNavigation(
                                 db.studentDao().updateStudent(updatedStudent)
                             }
 
-                            // Automatically set the captured FRONTAL photo as the student's profile picture if none exists yet
-                            if (!com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.hasCustomProfileImage(context, studentId)) {
-                                val frontalBmp = capturedSteps.firstOrNull { it.stepAngle.contains("FRONT", ignoreCase = true) }?.bitmap
-                                    ?: capturedSteps.firstOrNull()?.bitmap
-                                if (frontalBmp != null) {
-                                    com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.saveProfileBitmap(context, studentId, frontalBmp)
-                                }
-                            }
-
                             // Navigate immediately so student never waits on network upload
                             withContext(Dispatchers.Main) {
                                 showBanner("Face profile registered! Syncing with cloud... ✓", false)
@@ -699,7 +691,7 @@ fun AppNavigation(
                                 }
                             }
 
-                            // Sync profile, avatar, and photos to cloud in background
+                            // Sync profile and calibration embeddings to cloud in background (do NOT set face photo as avatar)
                             if (student != null) {
                                 val updatedStudent = student.copy(enrollmentStatus = 1)
                                 val allVectors = capturedSteps.map { it.embedding } + listOf(averagedVector)
@@ -708,7 +700,6 @@ fun AppNavigation(
                                     embeddings = allVectors,
                                     password = user?.passwordHash
                                 )
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadProfileAvatar(context, studentId)
                                 val angleBitmaps = capturedSteps.map { it.stepAngle to it.bitmap }
                                 com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadCalibrationSamples(studentId, angleBitmaps)
                             }
@@ -1619,8 +1610,8 @@ fun AppNavigation(
                 onDismissRequest = { if (!isDownloadingUpdate) availableUpdate = null },
                 title = {
                     Text(
-                        if (isDownloadingUpdate) "📲 Installing Update ($downloadProgress%)"
-                        else "🚀 Wireless Update ($latestTag)",
+                        if (isDownloadingUpdate) "Updating ($downloadProgress%)"
+                        else "Update Available ($latestTag)",
                         fontWeight = FontWeight.Bold
                     )
                 },
@@ -1638,7 +1629,7 @@ fun AppNavigation(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text(
-                                text = "Downloading APK wirelessly... $downloadProgress%",
+                                text = "Downloading... $downloadProgress%",
                                 fontSize = 12.sp
                             )
                         }
@@ -1662,7 +1653,7 @@ fun AppNavigation(
                             }
                         }
                     ) {
-                        Text(if (isDownloadingUpdate) "Downloading..." else "Install Wirelessly")
+                        Text(if (isDownloadingUpdate) "Updating..." else "Update")
                     }
                 },
                 dismissButton = {

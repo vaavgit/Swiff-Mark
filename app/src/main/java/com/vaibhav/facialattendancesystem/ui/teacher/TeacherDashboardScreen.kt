@@ -66,10 +66,16 @@ fun TeacherDashboardScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    var profileBitmap by remember(teacherId) { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, teacherId)) }
+    val avatarVer = ProfileImageHelper.avatarVersion
+    var profileBitmap by remember(teacherId, avatarVer) {
+        mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, teacherId))
+    }
 
     LaunchedEffect(teacherId) {
         if (teacherId.isNotBlank()) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
+            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, teacherId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -80,9 +86,7 @@ fun TeacherDashboardScreen(
                 val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.downloadAndCacheProfileAvatar(context, teacherId)
                 }
-                if (downloaded) {
-                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, teacherId)
-                }
+                profileBitmap = if (downloaded) ProfileImageHelper.loadProfileBitmap(context, teacherId) else null
             }
         }
     }
@@ -108,9 +112,7 @@ fun TeacherDashboardScreen(
         ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
         ?: "Teacher"
 
-    val initials = teacherName.split(" ")
-        .take(2).mapNotNull { it.firstOrNull()?.uppercaseChar() }.joinToString("")
-        .ifEmpty { "T" }
+    val initials = ProfileImageHelper.getInitials(teacherName, "T")
 
     val borderColor = adaptiveBorderColor()
 

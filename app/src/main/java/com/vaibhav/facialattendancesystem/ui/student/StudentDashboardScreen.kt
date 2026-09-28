@@ -63,10 +63,16 @@ fun StudentDashboardScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    var profileBitmap by remember { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId)) }
+    val avatarVer = ProfileImageHelper.avatarVersion
+    var profileBitmap by remember(student.studentId, avatarVer) {
+        mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
+    }
 
     LaunchedEffect(student.studentId) {
         if (student.studentId.isNotBlank()) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
+            }
             val localBmp = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
             if (localBmp != null) {
                 profileBitmap = localBmp
@@ -77,9 +83,7 @@ fun StudentDashboardScreen(
                 val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
                 }
-                if (downloaded) {
-                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
-                }
+                profileBitmap = if (downloaded) ProfileImageHelper.loadProfileBitmap(context, student.studentId) else null
             }
         }
     }
@@ -105,9 +109,7 @@ fun StudentDashboardScreen(
         ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
         ?: "Student"
 
-    val initials = student.fullName.split(" ")
-        .take(2).mapNotNull { it.firstOrNull()?.uppercaseChar() }.joinToString("")
-        .ifEmpty { "S" }
+    val initials = ProfileImageHelper.getInitials(student.fullName, "S")
 
     val borderColor = adaptiveBorderColor()
 

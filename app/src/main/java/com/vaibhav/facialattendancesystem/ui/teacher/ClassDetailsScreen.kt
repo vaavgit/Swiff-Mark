@@ -253,7 +253,8 @@ fun ClassDetailsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // Smart avatar for pending student
-                            val pendingAvatarBitmap = remember(student.studentId) {
+                            val avatarVer = ProfileImageHelper.avatarVersion
+                            val pendingAvatarBitmap = remember(student.studentId, avatarVer) {
                                 mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
                             }
                             LaunchedEffect(student.studentId) {
@@ -282,7 +283,7 @@ fun ClassDetailsScreen(
                                     )
                                 } else {
                                     Text(
-                                        text = "${student.rollNumber}",
+                                        text = ProfileImageHelper.getInitials(student.fullName, "S"),
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = WarningAmber
@@ -410,8 +411,9 @@ fun ClassDetailsScreen(
                                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                                             modifier = Modifier.weight(1f)
                                         ) {
-                                            // Smart avatar: show profile photo if available, fallback to roll number
-                                            val studentAvatarBitmap = remember(student.studentId) {
+                                            // Smart avatar: show profile photo if available, fallback to First+Last initials (VV)
+                                            val avatarVerRoster = ProfileImageHelper.avatarVersion
+                                            val studentAvatarBitmap = remember(student.studentId, avatarVerRoster) {
                                                 mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
                                             }
                                             val scope = rememberCoroutineScope()
@@ -442,7 +444,7 @@ fun ClassDetailsScreen(
                                                     )
                                                 } else {
                                                     Text(
-                                                        text = "${student.rollNumber}",
+                                                        text = ProfileImageHelper.getInitials(student.fullName, "S"),
                                                         fontSize = 14.sp,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = PrimaryCyan
