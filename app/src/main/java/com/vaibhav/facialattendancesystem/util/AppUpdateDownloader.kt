@@ -61,6 +61,12 @@ object AppUpdateDownloader {
                     }
                 }
             }
+            if (apkUrl.isBlank()) {
+                val match = Regex("""https://[^\s")\]]+\.apk""", RegexOption.IGNORE_CASE).find(notes)
+                if (match != null) {
+                    apkUrl = match.value
+                }
+            }
 
             val cleanRemote = tagName.removePrefix("v").removePrefix("V").trim()
             val cleanLocal = com.vaibhav.facialattendancesystem.BuildConfig.VERSION_NAME
@@ -98,7 +104,7 @@ object AppUpdateDownloader {
                 return@withContext Pair(true, "Opened release page in browser.")
             }
 
-            val targetDir = context.externalCacheDir ?: context.cacheDir
+            val targetDir = context.cacheDir
             val apkFile = File(targetDir, "Swiff-Mark-update.apk")
             if (apkFile.exists()) apkFile.delete()
 

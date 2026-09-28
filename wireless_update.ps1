@@ -15,9 +15,16 @@ if ($usbDevice) {
     Write-Host "Detected USB device: $serial. Enabling Wireless ADB on port 5555..." -ForegroundColor Green
     & $Adb -s $serial tcpip 5555 | Out-Null
     Start-Sleep -Seconds 2
-    $ipRoute = & $Adb -s $serial shell "ip route | grep wlan0" 2>$null
-    if ($ipRoute -match "src\s+(\d+\.\d+\.\d+\.\d+)") {
+    $ipOut = & $Adb -s $serial shell "ip -f inet addr show wlan0" 2>$null
+    if ($ipOut -match "inet\s+(\d+\.\d+\.\d+\.\d+)") {
         $PhoneIp = $Matches[1]
+    } else {
+        $ipRoute = & $Adb -s $serial shell "ip route" 2>$null
+        if ($ipRoute -match "src\s+(\d+\.\d+\.\d+\.\d+)") {
+            $PhoneIp = $Matches[1]
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PhoneIp)) {
         Set-Content -Path $IpCacheFile -Value $PhoneIp -NoNewline
         Write-Host "Saved phone Wi-Fi IP: $PhoneIp" -ForegroundColor Green
     }
