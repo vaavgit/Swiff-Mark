@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -1610,40 +1611,65 @@ fun AppNavigation(
         }
 
         val currentUpdate = availableUpdate
+        var isDownloadingUpdate by remember { mutableStateOf(false) }
+        var downloadProgress by remember { mutableStateOf(0) }
         if (currentUpdate != null) {
             val (latestTag, releaseNotes, downloadUrl) = currentUpdate
             androidx.compose.material3.AlertDialog(
-                onDismissRequest = { availableUpdate = null },
+                onDismissRequest = { if (!isDownloadingUpdate) availableUpdate = null },
                 title = {
-                    Text("🚀 Update Available ($latestTag)", fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isDownloadingUpdate) "📲 Installing Update ($downloadProgress%)"
+                        else "🚀 Wireless Update ($latestTag)",
+                        fontWeight = FontWeight.Bold
+                    )
                 },
                 text = {
-                    Text(
-                        text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
-                        fontSize = 14.sp
-                    )
+                    androidx.compose.foundation.layout.Column(
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
+                            fontSize = 14.sp
+                        )
+                        if (isDownloadingUpdate) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { (downloadProgress / 100f).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Downloading APK wirelessly... $downloadProgress%",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
                 },
                 confirmButton = {
                     androidx.compose.material3.Button(
+                        enabled = !isDownloadingUpdate,
                         onClick = {
-                            availableUpdate = null
-                            try {
-                                val intent = android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(downloadUrl)
+                            isDownloadingUpdate = true
+                            downloadProgress = 0
+                            scope.launch {
+                                val (ok, msg) = com.vaibhav.facialattendancesystem.util.AppUpdateDownloader.downloadAndInstallApk(
+                                    context = context,
+                                    apkUrl = downloadUrl,
+                                    onProgress = { pct -> downloadProgress = pct }
                                 )
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+                                isDownloadingUpdate = false
+                                availableUpdate = null
+                                showBanner(msg, !ok)
                             }
                         }
                     ) {
-                        Text("Download Update")
+                        Text(if (isDownloadingUpdate) "Downloading..." else "Install Wirelessly")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { availableUpdate = null }) {
-                        Text("Later")
+                    if (!isDownloadingUpdate) {
+                        TextButton(onClick = { availableUpdate = null }) {
+                            Text("Later")
+                        }
                     }
                 }
             )

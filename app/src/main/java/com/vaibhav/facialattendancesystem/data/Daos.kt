@@ -4,16 +4,27 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface UserDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun insertUser(user: User): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertUserIgnore(user: User): Long
 
     @Update
     fun updateUser(user: User): Int
+
+    @Transaction
+    fun insertUser(user: User): Long {
+        val id = insertUserIgnore(user)
+        if (id == -1L) {
+            updateUser(user)
+            return 0L
+        }
+        return id
+    }
 
     @Query("SELECT * FROM users WHERE email = :email LIMIT 1")
     fun getUserByEmail(email: String): User?
@@ -27,11 +38,21 @@ interface UserDao {
 
 @Dao
 interface StudentDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun insertStudent(student: Student): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertStudentIgnore(student: Student): Long
 
     @Update
     fun updateStudent(student: Student): Int
+
+    @Transaction
+    fun insertStudent(student: Student): Long {
+        val id = insertStudentIgnore(student)
+        if (id == -1L) {
+            updateStudent(student)
+            return 0L
+        }
+        return id
+    }
 
     @Query("SELECT * FROM students WHERE user_id = :userId LIMIT 1")
     fun getStudentByUserId(userId: String): Student?
@@ -51,11 +72,21 @@ interface StudentDao {
 
 @Dao
 interface TeacherDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun insertTeacher(teacher: Teacher): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertTeacherIgnore(teacher: Teacher): Long
 
     @Update
     fun updateTeacher(teacher: Teacher): Int
+
+    @Transaction
+    fun insertTeacher(teacher: Teacher): Long {
+        val id = insertTeacherIgnore(teacher)
+        if (id == -1L) {
+            updateTeacher(teacher)
+            return 0L
+        }
+        return id
+    }
 
     @Query("SELECT * FROM teachers WHERE user_id = :userId LIMIT 1")
     fun getTeacherByUserId(userId: String): Teacher?
@@ -87,8 +118,21 @@ interface FaceEmbeddingDao {
 
 @Dao
 interface ClazzDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun insertClass(clazz: Clazz): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertClassIgnore(clazz: Clazz): Long
+
+    @Update
+    fun updateClass(clazz: Clazz): Int
+
+    @Transaction
+    fun insertClass(clazz: Clazz): Long {
+        val id = insertClassIgnore(clazz)
+        if (id == -1L) {
+            updateClass(clazz)
+            return 0L
+        }
+        return id
+    }
 
     @Query("SELECT * FROM classes WHERE teacher_id = :teacherId ORDER BY created_at DESC")
     fun getClassesForTeacher(teacherId: String): Flow<List<Clazz>>
@@ -180,11 +224,21 @@ interface ClassEnrollmentDao {
 
 @Dao
 interface AttendanceDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun insertSession(session: AttendanceSession): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertSessionIgnore(session: AttendanceSession): Long
 
     @Update
     fun updateSession(session: AttendanceSession): Int
+
+    @Transaction
+    fun insertSession(session: AttendanceSession): Long {
+        val id = insertSessionIgnore(session)
+        if (id == -1L) {
+            updateSession(session)
+            return 0L
+        }
+        return id
+    }
 
     @Query("SELECT * FROM attendance_sessions WHERE session_id = :sessionId LIMIT 1")
     fun getSessionById(sessionId: String): AttendanceSession?

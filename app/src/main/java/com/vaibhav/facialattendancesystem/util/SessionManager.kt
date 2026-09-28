@@ -190,4 +190,22 @@ class SessionManager(context: Context) {
         current.add(classId)
         prefs.edit().putStringSet("deleted_classes_$teacherId", current).apply()
     }
+
+    // ── Attendance Notification Deduplication ─────────────────────────────────
+    fun hasInitializedNotifiedSessions(studentId: String): Boolean {
+        return prefs.getBoolean("notified_sessions_init_$studentId", false)
+    }
+
+    fun getNotifiedSessionIds(studentId: String): Set<String> {
+        return prefs.getStringSet("notified_session_ids_$studentId", emptySet()) ?: emptySet()
+    }
+
+    fun markSessionsNotified(studentId: String, sessionIds: Collection<String>) {
+        val current = getNotifiedSessionIds(studentId).toMutableSet()
+        current.addAll(sessionIds)
+        prefs.edit()
+            .putStringSet("notified_session_ids_$studentId", current)
+            .putBoolean("notified_sessions_init_$studentId", true)
+            .commit()
+    }
 }

@@ -438,11 +438,17 @@ object CloudSyncManager {
             if (status !in 200..299) return@withContext Pair(false, "Sync error ($status)")
 
             val records = JSONArray(response)
+            val sm = sessionManagerRef ?: context?.let { com.vaibhav.facialattendancesystem.util.SessionManager(it) }
+            val isFirstNotificationInit = sm != null && !sm.hasInitializedNotifiedSessions(studentId)
+            val alreadyNotifiedIds = sm?.getNotifiedSessionIds(studentId) ?: emptySet()
+            val allSeenSessionIds = mutableSetOf<String>()
+
             var newCount = 0
             var latestClassId = ""
             var latestClassName = ""
             var latestDateStr = ""
             var latestIsPresent = false
+            val nowMs = System.currentTimeMillis()
 
             for (i in 0 until records.length()) {
                 val recObj = records.getJSONObject(i)
@@ -460,6 +466,7 @@ object CloudSyncManager {
                 }
 
                 val sessionId = sessObj.getString("session_id")
+                allSeenSessionIds.add(sessionId)
                 // Parse the real session date from cloud; prefer created_at for accurate time
                 val rawCreatedAt = sessObj.optString("created_at", "")
                 val rawDate = sessObj.optString("session_date", "")
@@ -479,13 +486,22 @@ object CloudSyncManager {
                 } else System.currentTimeMillis()
 
                 val isPresent = recObj.optBoolean("marked_present", false)
+                val wasMissingInLocalDb = db.attendanceDao().getSessionById(sessionId) == null
 
-                if (db.attendanceDao().getSessionById(sessionId) == null) {
+                if (wasMissingInLocalDb) {
                     db.attendanceDao().insertSession(AttendanceSession(
                         sessionId = sessionId, classId = classId,
                         sessionDate = parsedDate,
                         photo1Path = "", photo1FacesDetected = 0
                     ))
+                }
+
+                // Only trigger a notification if:
+                // 1. It wasn't already notified in SharedPreferences
+                // 2. It wasn't the very first baseline sync on this install
+                // 3. It was missing in local DB and occurred within the last 24 hours
+                val isRecentSession = (nowMs - parsedDate) <= 24L * 60L * 60L * 1000L
+                if (wasMissingInLocalDb && !isFirstNotificationInit && !alreadyNotifiedIds.contains(sessionId) && isRecentSession) {
                     newCount++
                     latestClassId = classId
                     latestClassName = className
@@ -497,6 +513,10 @@ object CloudSyncManager {
                     sessionId = sessionId, studentId = studentId, markedPresent = if (isPresent) 1 else 0
                 )))
             }
+
+            // Persist all seen session IDs so none of them can ever notify again
+            sm?.markSessionsNotified(studentId, allSeenSessionIds)
+
             if (newCount > 0 && notify && context != null && latestClassId.isNotBlank()) {
                 val recordsInClass = db.attendanceDao().getRecordsListForStudentInClass(latestClassId, studentId)
                 val totalLectures = db.attendanceDao().getSessionsListForClass(latestClassId).size
