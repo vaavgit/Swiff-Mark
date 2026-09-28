@@ -22,35 +22,133 @@ object CloudSyncManager {
     @Volatile
     private var authToken: String? = null
 
+    @Volatile
+    private var sessionManagerRef: com.vaibhav.facialattendancesystem.util.SessionManager? = null
+
+    @Volatile
+    private var dbRef: AppDatabase? = null
+
+    @Volatile
+    private var contextRef: android.content.Context? = null
+
+    fun initSessionManager(
+        sm: com.vaibhav.facialattendancesystem.util.SessionManager,
+        db: AppDatabase? = null,
+        context: android.content.Context? = null
+    ) {
+        sessionManagerRef = sm
+        if (db != null) dbRef = db
+        if (context != null) contextRef = context.applicationContext
+    }
+
+    private fun saveBase64AvatarToLocal(userId: String, avatarUrl: String): Boolean {
+        val ctx = contextRef ?: return false
+        if (userId.isBlank() || !avatarUrl.startsWith("data:image/") || !avatarUrl.contains("base64,")) return false
+        return try {
+            val base64Data = avatarUrl.substringAfter("base64,")
+            val decodedBytes = Base64.decode(base64Data, Base64.DEFAULT)
+            if (decodedBytes.isNotEmpty()) {
+                val targetFile = java.io.File(ctx.filesDir, "avatar_${userId}.jpg")
+                targetFile.writeBytes(decodedBytes)
+                true
+            } else false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun setAuthToken(token: String?) {
         authToken = token
     }
 
-    private fun getHeaders(): Map<String, String> {
-        val token = authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
+    private fun getHeaders(overrideToken: String? = null): Map<String, String> {
+        val liveToken = overrideToken?.ifBlank { null }
+            ?: sessionManagerRef?.getAccessToken()?.ifBlank { null }
+            ?: authToken?.ifBlank { null }
+            ?: SupabaseConfig.SUPABASE_ANON_KEY
+        if (!overrideToken.isNullOrBlank()) {
+            authToken = overrideToken
+        }
         return mapOf(
             "apikey" to SupabaseConfig.SUPABASE_ANON_KEY,
-            "Authorization" to "Bearer $token",
+            "Authorization" to "Bearer $liveToken",
             "Content-Type" to "application/json",
             "Prefer" to "return=representation"
         )
     }
 
-    private fun executeRequest(
+    /**
+     * Attempts to silently refresh an expired JWT (401) using:
+     * 1. Saved refresh_token via GoTrue (/auth/v1/token?grant_type=refresh_token)
+     * 2. Saved login credentials in SessionManager
+     * 3. Cached passwordHash in local Room DB (users table)
+     * Returns the new access_token if successful, or null if recovery was not possible.
+     */
+    @Synchronized
+    private fun recoverFrom401(): String? {
+        val sm = sessionManagerRef ?: return null
+        val session = sm.getSession()
+
+        // 1. Try refresh_token first
+        val refreshTok = sm.getRefreshToken()
+        if (!refreshTok.isNullOrBlank()) {
+            val refreshed = SupabaseAuthManager.refreshSessionBlocking(refreshTok)
+            if (refreshed != null) {
+                sm.updateTokens(refreshed.first, refreshed.second)
+                authToken = refreshed.first
+                return refreshed.first
+            }
+        }
+
+        // 2. Try saved login credentials in SessionManager
+        val savedEmail = sm.getSavedEmail()
+        val savedPass = sm.getSavedPassword()
+        if (savedEmail.isNotBlank() && savedPass.isNotBlank()) {
+            val reSigned = SupabaseAuthManager.signInBlocking(savedEmail, savedPass)
+            if (reSigned != null) {
+                sm.updateTokens(reSigned.first, reSigned.second)
+                authToken = reSigned.first
+                return reSigned.first
+            }
+        }
+
+        // 3. Try cached user record in local Room database
+        val database = dbRef
+        if (database != null && session != null) {
+            try {
+                val localUser = database.userDao().getUserById(session.userId)
+                    ?: database.userDao().getUserByEmail(session.userEmail)
+                if (localUser != null && localUser.email.isNotBlank() && localUser.passwordHash.isNotBlank()) {
+                    val reSigned = SupabaseAuthManager.signInBlocking(localUser.email, localUser.passwordHash)
+                    if (reSigned != null) {
+                        sm.updateTokens(reSigned.first, reSigned.second)
+                        authToken = reSigned.first
+                        return reSigned.first
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 4. Clear expired token so fallback to SUPABASE_ANON_KEY can be attempted
+        sm.updateAccessToken(null)
+        authToken = null
+        return null
+    }
+
+    private fun performHttpCall(
         endpoint: String,
         method: String,
         body: String? = null,
-        extraHeaders: Map<String, String>? = null
+        extraHeaders: Map<String, String>? = null,
+        overrideToken: String? = null
     ): Pair<Int, String> {
-        if (!SupabaseConfig.isConfigured) return Pair(400, "Supabase not configured")
-
         val fullUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}$endpoint"
         val connection = URL(fullUrl).openConnection() as HttpURLConnection
         connection.requestMethod = method
         connection.connectTimeout = 10000
         connection.readTimeout = 15000
 
-        getHeaders().forEach { (k, v) -> connection.setRequestProperty(k, v) }
+        getHeaders(overrideToken).forEach { (k, v) -> connection.setRequestProperty(k, v) }
         extraHeaders?.forEach { (k, v) -> connection.setRequestProperty(k, v) }
 
         if (body != null && (method == "POST" || method == "PUT" || method == "PATCH")) {
@@ -67,6 +165,31 @@ object CloudSyncManager {
         return Pair(statusCode, response)
     }
 
+    private fun executeRequest(
+        endpoint: String,
+        method: String,
+        body: String? = null,
+        extraHeaders: Map<String, String>? = null
+    ): Pair<Int, String> {
+        if (!SupabaseConfig.isConfigured) return Pair(400, "Supabase not configured")
+
+        val (statusCode, response) = performHttpCall(endpoint, method, body, extraHeaders)
+
+        // If 401 Unauthorized (e.g., JWT expired after 1 hour), automatically refresh token / re-authenticate and retry once!
+        if (statusCode == 401 || (statusCode == 403 && response.contains("JWT", ignoreCase = true))) {
+            val freshToken = recoverFrom401()
+            return performHttpCall(
+                endpoint = endpoint,
+                method = method,
+                body = body,
+                extraHeaders = extraHeaders,
+                overrideToken = freshToken ?: SupabaseConfig.SUPABASE_ANON_KEY
+            )
+        }
+
+        return Pair(statusCode, response)
+    }
+
     suspend fun ensureCloudUserProfile(userId: String, email: String, fullName: String, role: String, rollOrSubject: String = "", sectionOrDept: String = ""): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseConfig.isConfigured || userId.isBlank()) return@withContext false
         try {
@@ -76,7 +199,7 @@ object CloudSyncManager {
                 put("full_name", fullName.trim())
                 put("role", role.uppercase())
             }
-            executeRequest("/rest/v1/profiles", "POST", profileJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
+            executeRequest("/rest/v1/profiles?on_conflict=id", "POST", profileJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
 
             if (role.uppercase() == "STUDENT") {
                 val studentJson = JSONObject().apply {
@@ -84,14 +207,14 @@ object CloudSyncManager {
                     if (rollOrSubject.isNotBlank()) put("roll_number", rollOrSubject)
                     if (sectionOrDept.isNotBlank()) put("department", sectionOrDept)
                 }
-                executeRequest("/rest/v1/students", "POST", studentJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
+                executeRequest("/rest/v1/students?on_conflict=student_id", "POST", studentJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
             } else {
                 val teacherJson = JSONObject().apply {
                     put("teacher_id", userId)
                     put("department", sectionOrDept.ifBlank { "CSE" })
                     put("designation", rollOrSubject.ifBlank { "Faculty" })
                 }
-                executeRequest("/rest/v1/teachers", "POST", teacherJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
+                executeRequest("/rest/v1/teachers?on_conflict=teacher_id", "POST", teacherJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
             }
             true
         } catch (e: Exception) { false }
@@ -100,7 +223,7 @@ object CloudSyncManager {
     suspend fun syncClassRosterForTeacher(classId: String, db: AppDatabase): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
             // Step 1: Query class_enrollments to get all enrolled student IDs
-            val query = "/rest/v1/class_enrollments?class_id=eq.$classId&select=student_id"
+            val query = "/rest/v1/class_enrollments?class_id=eq.$classId&select=*"
             val (status, response) = executeRequest(query, "GET")
             if (status !in 200..299) return@withContext Pair(false, "Cloud error ($status)")
 
@@ -110,15 +233,20 @@ object CloudSyncManager {
             }
 
             val studentIds = mutableListOf<String>()
+            val verifiedStatusMap = mutableMapOf<String, Int>()
             for (i in 0 until enrollArray.length()) {
-                val sId = enrollArray.getJSONObject(i).optString("student_id", "")
-                if (sId.isNotBlank()) studentIds.add(sId)
+                val obj = enrollArray.getJSONObject(i)
+                val sId = obj.optString("student_id", "")
+                if (sId.isNotBlank()) {
+                    studentIds.add(sId)
+                    verifiedStatusMap[sId] = obj.optInt("enrollment_verified", 1)
+                }
             }
             if (studentIds.isEmpty()) return@withContext Pair(true, "No students enrolled yet.")
 
             val idsFilter = studentIds.joinToString(",")
 
-            // Step 2: Fetch student profiles (name, email)
+            // Step 2: Fetch student profiles (name, email, avatar_url)
             val profilesMap = mutableMapOf<String, Pair<String, String>>()
             val (pStatus, pResponse) = executeRequest("/rest/v1/profiles?id=in.($idsFilter)&select=*", "GET")
             if (pStatus in 200..299) {
@@ -128,7 +256,11 @@ object CloudSyncManager {
                     val id = p.getString("id")
                     val name = p.optString("full_name", "Student")
                     val email = p.optString("email", "")
+                    val avatarUrl = p.optString("avatar_url", "")
                     profilesMap[id] = Pair(name, email)
+                    if (avatarUrl.isNotBlank()) {
+                        saveBase64AvatarToLocal(id, avatarUrl)
+                    }
                 }
             }
 
@@ -162,16 +294,26 @@ object CloudSyncManager {
                 }
             }
 
-            // Step 5: Save all data to local Room database
+            // Step 5: Save all data to local Room database + ensure student avatars are cached
+            val ctx = contextRef
             for (sId in studentIds) {
                 val (fullName, email) = profilesMap[sId] ?: Pair("Student", "")
                 val (rollNo, dept) = studentMetaMap[sId] ?: Pair(0, "")
+                val verified = verifiedStatusMap[sId] ?: 1
 
                 if (db.userDao().getUserById(sId) == null) {
                     db.userDao().insertUser(User(userId = sId, email = email, passwordHash = "", userType = "STUDENT", name = fullName))
                 }
                 db.studentDao().insertStudent(Student(studentId = sId, userId = sId, fullName = fullName, rollNumber = rollNo, email = email, classSection = dept, enrollmentStatus = 1))
-                db.classEnrollmentDao().enrollStudent(ClassEnrollment(classId = classId, studentId = sId, enrollmentVerified = 1))
+                db.classEnrollmentDao().enrollStudent(ClassEnrollment(classId = classId, studentId = sId, enrollmentVerified = verified))
+                db.classEnrollmentDao().updateEnrollmentStatus(classId, sId, verified)
+
+                if (ctx != null) {
+                    val avatarFile = java.io.File(ctx.filesDir, "avatar_${sId}.jpg")
+                    if (!avatarFile.exists() || avatarFile.length() == 0L) {
+                        downloadAndCacheProfileAvatar(ctx, sId)
+                    }
+                }
 
                 val embs = embeddingsMap[sId]
                 if (embs != null && embs.isNotEmpty()) {
@@ -198,16 +340,49 @@ object CloudSyncManager {
         sessionManager: com.vaibhav.facialattendancesystem.util.SessionManager? = null
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
-            val (status, response) = executeRequest("/rest/v1/classes?teacher_id=eq.$teacherId&select=*&order=created_at.desc", "GET")
-            if (status !in 200..299) return@withContext Pair(false, "Error $status")
+            if (sessionManager != null) initSessionManager(sessionManager, db)
             val deletedClassIds = sessionManager?.getDeletedClassIds(teacherId) ?: emptySet()
+
+            // Step 1: Ensure teacher row exists in Supabase profiles & teachers tables
+            val localUser = db.userDao().getUserById(teacherId)
+            val localTeacher = db.teacherDao().getTeacherById(teacherId)
+            val sess = sessionManager?.getSession()
+            ensureCloudUserProfile(
+                userId = teacherId,
+                email = localUser?.email ?: sess?.userEmail ?: "",
+                fullName = localUser?.name ?: sess?.userName ?: "Teacher",
+                role = "TEACHER",
+                rollOrSubject = localTeacher?.subject ?: "Faculty",
+                sectionOrDept = localTeacher?.department ?: "CSE"
+            )
+
+            // Sync teacher's own profile avatar (upload if local exists, else download from cloud)
+            contextRef?.let { ctx ->
+                val localAvatar = java.io.File(ctx.filesDir, "avatar_${teacherId}.jpg")
+                if (localAvatar.exists() && localAvatar.length() > 0L) {
+                    uploadProfileAvatar(ctx, teacherId)
+                } else {
+                    downloadAndCacheProfileAvatar(ctx, teacherId)
+                }
+            }
+
+            // Step 2: Push any local classes created on this device that haven't been synced to cloud yet
+            val localClasses = db.clazzDao().getClassesListForTeacher(teacherId)
+            for (localClazz in localClasses) {
+                if (!deletedClassIds.contains(localClazz.classId)) {
+                    uploadNewClass(localClazz)
+                }
+            }
+
+            // Step 3: Pull all teacher classes from Supabase
+            val (status, response) = executeRequest("/rest/v1/classes?teacher_id=eq.$teacherId&select=*&order=created_at.desc", "GET")
+            if (status !in 200..299) return@withContext Pair(false, "Cloud sync status $status")
             val classesArray = JSONArray(response)
             val cloudClassIds = mutableSetOf<String>()
             for (i in 0 until classesArray.length()) {
                 val c = classesArray.getJSONObject(i)
                 val classId = c.getString("class_id")
                 if (deletedClassIds.contains(classId)) {
-                    // Do not restore classes deleted by teacher
                     db.clazzDao().deleteClassById(classId)
                     continue
                 }
@@ -228,8 +403,10 @@ object CloudSyncManager {
                     createdAt = createdAt
                 ))
                 syncClassRosterForTeacher(classId, db)
+                syncClassAttendanceSessionsForTeacher(classId, db)
             }
-            Pair(true, "Synced ${classesArray.length()} classes.")
+            val totalSynced = maxOf(classesArray.length(), localClasses.count { !deletedClassIds.contains(it.classId) })
+            Pair(true, "Synced $totalSynced classes.")
         } catch (e: Exception) { Pair(false, e.localizedMessage ?: "Error") }
     }
 
@@ -240,7 +417,8 @@ object CloudSyncManager {
                 put("session_id", session.sessionId); put("class_id", session.classId); put("teacher_id", teacherId); put("session_date", dateStr)
                 put("photo1_faces_detected", session.photo1FacesDetected); put("photo2_faces_detected", session.photo2FacesDetected); put("session_status", session.sessionStatus)
             }
-            executeRequest("/rest/v1/attendance_sessions", "POST", sessionJson.toString())
+            executeRequest("/rest/v1/attendance_sessions", "POST", sessionJson.toString(),
+                mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
             
             val recordsArray = JSONArray()
             for (r in records) {
@@ -355,6 +533,18 @@ object CloudSyncManager {
         sessionManager: com.vaibhav.facialattendancesystem.util.SessionManager? = null
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
+            if (sessionManager != null) initSessionManager(sessionManager, db)
+
+            // Sync student's own profile & avatar (upload if local exists, else download from cloud)
+            contextRef?.let { ctx ->
+                val localAvatar = java.io.File(ctx.filesDir, "avatar_${studentId}.jpg")
+                if (localAvatar.exists() && localAvatar.length() > 0L) {
+                    uploadProfileAvatar(ctx, studentId)
+                } else {
+                    downloadAndCacheProfileAvatar(ctx, studentId)
+                }
+            }
+
             val query = "/rest/v1/class_enrollments?student_id=eq.$studentId&select=class_id,classes(*)"
             val (status, response) = executeRequest(query, "GET")
             if (status !in 200..299) return@withContext Pair(false, "Sync error ($status)")
@@ -362,11 +552,11 @@ object CloudSyncManager {
             val leftClassIds = sessionManager?.getLeftClassIds(studentId) ?: emptySet()
             val array = JSONArray(response)
             val cloudClassIds = mutableSetOf<String>()
+            val teacherIds = mutableSetOf<String>()
             for (i in 0 until array.length()) {
                 val item = array.getJSONObject(i)
                 val classId = item.getString("class_id")
                 if (leftClassIds.contains(classId)) {
-                    // Student has explicitly left this class, unenroll locally
                     db.classEnrollmentDao().unenrollStudent(classId, studentId)
                     continue
                 }
@@ -375,9 +565,11 @@ object CloudSyncManager {
                 if (classObj != null) {
                     val existing = db.clazzDao().getClassById(classId)
                     val createdAt = existing?.createdAt ?: System.currentTimeMillis()
+                    val tId = classObj.optString("teacher_id", "")
+                    if (tId.isNotBlank()) teacherIds.add(tId)
                     db.clazzDao().insertClass(Clazz(
                         classId = classId,
-                        teacherId = classObj.optString("teacher_id", ""),
+                        teacherId = tId,
                         className = classObj.optString("class_name", "Class"),
                         subject = classObj.optString("subject_code", ""),
                         semester = classObj.optInt("semester", 1),
@@ -388,6 +580,49 @@ object CloudSyncManager {
                 }
                 db.classEnrollmentDao().enrollStudent(ClassEnrollment(classId = classId, studentId = studentId, enrollmentVerified = 1))
             }
+
+            // Fetch teacher profiles & avatars for all joined classes so student sees teacher name & photo
+            if (teacherIds.isNotEmpty()) {
+                val tIdsFilter = teacherIds.joinToString(",")
+                val (tpStatus, tpResponse) = executeRequest("/rest/v1/profiles?id=in.($tIdsFilter)&select=*", "GET")
+                if (tpStatus in 200..299) {
+                    val tpArray = JSONArray(tpResponse)
+                    for (i in 0 until tpArray.length()) {
+                        val p = tpArray.getJSONObject(i)
+                        val tId = p.getString("id")
+                        val tName = p.optString("full_name", "Teacher")
+                        val tEmail = p.optString("email", "")
+                        val tAvatar = p.optString("avatar_url", "")
+                        val existingUser = db.userDao().getUserById(tId)
+                        db.userDao().insertUser(
+                            User(
+                                userId = tId,
+                                email = tEmail,
+                                passwordHash = existingUser?.passwordHash ?: "",
+                                userType = "TEACHER",
+                                name = tName
+                            )
+                        )
+                        if (db.teacherDao().getTeacherById(tId) == null) {
+                            db.teacherDao().insertTeacher(
+                                Teacher(teacherId = tId, userId = tId, subject = "Faculty", department = "General")
+                            )
+                        }
+                        if (tAvatar.isNotBlank()) {
+                            saveBase64AvatarToLocal(tId, tAvatar)
+                        }
+                    }
+                }
+                contextRef?.let { ctx ->
+                    for (tId in teacherIds) {
+                        val avatarFile = java.io.File(ctx.filesDir, "avatar_${tId}.jpg")
+                        if (!avatarFile.exists() || avatarFile.length() == 0L) {
+                            downloadAndCacheProfileAvatar(ctx, tId)
+                        }
+                    }
+                }
+            }
+
             Pair(true, "Synced ${cloudClassIds.size} enrolled classes.")
         } catch (e: Exception) { Pair(false, e.localizedMessage ?: "Sync Error") }
     }
@@ -412,13 +647,30 @@ object CloudSyncManager {
         sessionManager: com.vaibhav.facialattendancesystem.util.SessionManager? = null
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
+            if (sessionManager != null) initSessionManager(sessionManager, db)
             val token = sessionManager?.getAccessToken()
-            if (!token.isNullOrBlank() && authToken.isNullOrBlank()) {
+            if (!token.isNullOrBlank()) {
                 setAuthToken(token)
             }
-            val cleanCode = code.trim().uppercase()
-            val (status, response) = executeRequest("/rest/v1/classes?join_code=ilike.$cleanCode&select=*", "GET")
-            val array = if (status in 200..299) JSONArray(response) else JSONArray()
+
+            val rawClean = code.trim().uppercase().replace(" ", "")
+            // Support both "CS-4921" and "CS4921" formats automatically
+            val altCode = if (!rawClean.contains("-") && rawClean.length >= 3) {
+                val letters = rawClean.takeWhile { it.isLetter() }
+                val digits = rawClean.dropWhile { it.isLetter() }
+                if (letters.isNotEmpty() && digits.isNotEmpty()) "$letters-$digits" else rawClean
+            } else {
+                rawClean.replace("-", "")
+            }
+
+            var (status, response) = executeRequest("/rest/v1/classes?join_code=ilike.$rawClean&select=*", "GET")
+            var array = if (status in 200..299) JSONArray(response) else JSONArray()
+            if (array.length() == 0 && altCode != rawClean) {
+                val retry = executeRequest("/rest/v1/classes?join_code=ilike.$altCode&select=*", "GET")
+                status = retry.first
+                response = retry.second
+                array = if (status in 200..299) JSONArray(response) else JSONArray()
+            }
 
             val newClazz: Clazz = if (array.length() > 0) {
                 val classObj = array.getJSONObject(0)
@@ -429,54 +681,71 @@ object CloudSyncManager {
                     subject = classObj.optString("subject_code", ""),
                     semester = classObj.optInt("semester", 1),
                     section = classObj.optString("department", ""),
-                    classCode = cleanCode
+                    classCode = classObj.optString("join_code", rawClean)
                 )
             } else {
                 // Fallback: check local Room database for matching class code
-                val localClass = db?.clazzDao()?.getClassByCode(cleanCode)
+                val localClass = db?.clazzDao()?.getClassByCode(rawClean)
+                    ?: db?.clazzDao()?.getClassByCode(altCode)
                     ?: db?.clazzDao()?.getClassByCode(code.trim())
                 if (localClass != null) {
                     localClass
                 } else {
-                    return@withContext Pair(false, "Invalid Class Code. Check with your teacher.")
+                    return@withContext Pair(
+                        false,
+                        if (status == 401 || status == 403) "Authentication error ($status). Please log out and log in again."
+                        else "Invalid Class Code \"$rawClean\". Ask your teacher to open Swiff Mark so their class syncs to the cloud."
+                    )
                 }
             }
 
-            // Check if already enrolled (approved or pending)
+            // Check if already enrolled
             val existingIds = db?.classEnrollmentDao()?.getEnrolledStudentIds(newClazz.classId) ?: emptyList()
             if (existingIds.contains(studentId)) {
-                val existing = db?.classEnrollmentDao()?.getPendingEnrollmentsForClass(newClazz.classId)
-                    ?.any { it.studentId == studentId } ?: false
-                return@withContext if (existing) {
-                    Pair(false, "⏳ Your join request for \"${newClazz.className}\" is already pending teacher approval.")
-                } else {
-                    Pair(false, "You are already enrolled in \"${newClazz.className}\".")
-                }
+                return@withContext Pair(false, "You are already enrolled in \"${newClazz.className}\".")
             }
 
             // Re-allow class if previously left
             sessionManager?.unmarkClassLeft(studentId, newClazz.classId)
 
-            // Insert into Supabase as PENDING (status = 'PENDING')
+            // Ensure student profile exists in Supabase BEFORE inserting enrollment
+            if (studentId.isNotBlank()) {
+                val localStudent = db?.studentDao()?.getStudentById(studentId)
+                val sess = sessionManager?.getSession()
+                ensureCloudUserProfile(
+                    userId = studentId,
+                    email = localStudent?.email ?: sess?.userEmail ?: "",
+                    fullName = localStudent?.fullName ?: sess?.userName ?: "Student",
+                    role = "STUDENT",
+                    rollOrSubject = (localStudent?.rollNumber ?: 0).toString(),
+                    sectionOrDept = localStudent?.classSection ?: ""
+                )
+            }
+
+            // Insert into Supabase public.class_enrollments (schema has class_id, student_id)
             val enrollmentJson = JSONObject().apply {
                 put("class_id", newClazz.classId)
                 put("student_id", studentId)
-                put("enrollment_verified", 0)
             }
-            executeRequest(
+            val (enrollStatus, _) = executeRequest(
                 "/rest/v1/class_enrollments?on_conflict=class_id,student_id",
                 "POST",
                 enrollmentJson.toString(),
-                mapOf("Prefer" to "resolution=ignore-duplicates")
+                mapOf("Prefer" to "resolution=merge-duplicates")
             )
 
-            // Save class locally so student can see it (as pending)
+            // Save class & enrollment locally as verified (1) so student and teacher both see it immediately
             db?.clazzDao()?.insertClass(newClazz)
-            // enrollmentVerified = 0 → PENDING, teacher must approve
             db?.classEnrollmentDao()?.enrollStudent(
-                ClassEnrollment(classId = newClazz.classId, studentId = studentId, enrollmentVerified = 0)
+                ClassEnrollment(classId = newClazz.classId, studentId = studentId, enrollmentVerified = 1)
             )
-            Pair(true, "📨 Join request sent for \"${newClazz.className}\". Waiting for teacher approval.")
+            db?.classEnrollmentDao()?.updateEnrollmentStatus(newClazz.classId, studentId, 1)
+
+            if (enrollStatus in 200..299 || enrollStatus == 409) {
+                Pair(true, newClazz.className)
+            } else {
+                Pair(true, "${newClazz.className} (saved locally, will sync)")
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Pair(false, e.localizedMessage ?: "Join Error")
@@ -624,7 +893,12 @@ object CloudSyncManager {
                 put("department", clazz.section.ifBlank { "General" })
                 put("semester", if (clazz.semester > 0) clazz.semester else 1)
             }
-            val (status, _) = executeRequest("/rest/v1/classes", "POST", json.toString())
+            val (status, _) = executeRequest(
+                "/rest/v1/classes?on_conflict=class_id",
+                "POST",
+                json.toString(),
+                mapOf("Prefer" to "resolution=merge-duplicates")
+            )
             status in 200..299
         } catch (e: Exception) {
             e.printStackTrace()
@@ -651,16 +925,65 @@ object CloudSyncManager {
 
     suspend fun syncClassAttendanceSessionsForTeacher(classId: String, db: AppDatabase): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
-            val (status, response) = executeRequest("/rest/v1/attendance_sessions?class_id=eq.$classId&select=*", "GET")
+            val (status, response) = executeRequest("/rest/v1/attendance_sessions?class_id=eq.$classId&select=*&order=created_at.desc", "GET")
+            if (status !in 200..299) return@withContext Pair(false, "Sync error ($status)")
             val array = JSONArray(response)
+            val sessionIds = mutableListOf<String>()
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+                val sId = obj.getString("session_id")
+                sessionIds.add(sId)
+                val rawCreatedAt = obj.optString("created_at", "")
+                val rawDate = obj.optString("session_date", "")
+                val dateToParse = rawCreatedAt.ifBlank { rawDate }
+                val parsedDate: Long = if (dateToParse.isNotEmpty()) {
+                    try {
+                        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).parse(dateToParse)?.time ?: System.currentTimeMillis()
+                    } catch (e1: Exception) {
+                        try {
+                            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateToParse)?.time ?: System.currentTimeMillis()
+                        } catch (e2: Exception) { System.currentTimeMillis() }
+                    }
+                } else System.currentTimeMillis()
                 db.attendanceDao().insertSession(AttendanceSession(
-                    sessionId = obj.getString("session_id"), classId = classId, photo1Path = "", photo1FacesDetected = 0
+                    sessionId = sId, classId = classId,
+                    sessionDate = parsedDate,
+                    photo1Path = "", photo1FacesDetected = obj.optInt("photo1_faces_detected", 0),
+                    photo2Path = "", photo2FacesDetected = obj.optInt("photo2_faces_detected", 0),
+                    sessionStatus = obj.optString("session_status", "COMPLETED"),
+                    isSynced = true
                 ))
             }
+
+            // Also download all attendance_records for these sessions so teacher Attendance History & CSV exports are complete
+            if (sessionIds.isNotEmpty()) {
+                val sIdsFilter = sessionIds.joinToString(",")
+                val (rStatus, rResp) = executeRequest("/rest/v1/attendance_records?session_id=in.($sIdsFilter)&select=*", "GET")
+                if (rStatus in 200..299) {
+                    val rArray = JSONArray(rResp)
+                    val recordsToInsert = mutableListOf<AttendanceRecord>()
+                    for (i in 0 until rArray.length()) {
+                        val rObj = rArray.getJSONObject(i)
+                        val isPres = if (rObj.optBoolean("marked_present", false)) 1 else 0
+                        recordsToInsert.add(
+                            AttendanceRecord(
+                                sessionId = rObj.getString("session_id"),
+                                studentId = rObj.getString("student_id"),
+                                photo1Matched = isPres,
+                                photo2Matched = isPres,
+                                dualCapturePresent = isPres,
+                                markedPresent = isPres
+                            )
+                        )
+                    }
+                    if (recordsToInsert.isNotEmpty()) {
+                        db.attendanceDao().insertAttendanceRecords(recordsToInsert)
+                    }
+                }
+            }
+
             Pair(true, "Synced ${array.length()} sessions.")
-        } catch (e: Exception) { Pair(false, "Sync Error") }
+        } catch (e: Exception) { Pair(false, "Sync Error: ${e.localizedMessage}") }
     }
 
     // ─── Profile Avatar Cloud Sync ────────────────────────────────────────────────
@@ -716,7 +1039,8 @@ object CloudSyncManager {
 
             // Strategy 2: Attempt direct upload to Supabase Storage avatars bucket
             try {
-                val token = authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
+                val liveToken = sessionManagerRef?.getAccessToken()?.ifBlank { null }
+                    ?: authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
                 val storageUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}/storage/v1/object/avatars/${userId}.jpg"
 
                 val connection = java.net.URL(storageUrl).openConnection() as java.net.HttpURLConnection
@@ -724,7 +1048,7 @@ object CloudSyncManager {
                 connection.connectTimeout = 12000
                 connection.readTimeout = 15000
                 connection.setRequestProperty("apikey", SupabaseConfig.SUPABASE_ANON_KEY)
-                connection.setRequestProperty("Authorization", "Bearer $token")
+                connection.setRequestProperty("Authorization", "Bearer $liveToken")
                 connection.setRequestProperty("Content-Type", "image/jpeg")
                 connection.setRequestProperty("x-upsert", "true")
                 connection.doOutput = true
@@ -746,7 +1070,7 @@ object CloudSyncManager {
     }
 
     /**
-     * Download another user's avatar from Supabase and cache it locally
+     * Download a user's avatar from Supabase and cache it locally
      * using the same path convention as ProfileImageHelper: filesDir/avatar_<userId>.jpg
      * Returns true if downloaded (or already fresh locally).
      */
@@ -785,22 +1109,56 @@ object CloudSyncManager {
             }
 
             // Strategy 2: Check Supabase Storage avatars bucket
-            val token = authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
-            val storageUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}/storage/v1/object/avatars/${userId}.jpg"
+            try {
+                val liveToken2 = sessionManagerRef?.getAccessToken()?.ifBlank { null }
+                    ?: authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
+                val storageUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}/storage/v1/object/avatars/${userId}.jpg"
 
-            val connection = java.net.URL(storageUrl).openConnection() as java.net.HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 8000
-            connection.readTimeout = 12000
-            connection.setRequestProperty("apikey", SupabaseConfig.SUPABASE_ANON_KEY)
-            connection.setRequestProperty("Authorization", "Bearer $token")
+                val connection = java.net.URL(storageUrl).openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 8000
+                connection.readTimeout = 12000
+                connection.setRequestProperty("apikey", SupabaseConfig.SUPABASE_ANON_KEY)
+                connection.setRequestProperty("Authorization", "Bearer $liveToken2")
 
-            val statusCode = try { connection.responseCode } catch (e: Exception) { 503 }
-            if (statusCode in 200..299) {
-                val bytes = connection.inputStream.use { it.readBytes() }
-                if (bytes.isNotEmpty()) {
-                    targetFile.writeBytes(bytes)
-                    return@withContext true
+                val statusCode = try { connection.responseCode } catch (e: Exception) { 503 }
+                if (statusCode in 200..299) {
+                    val bytes = connection.inputStream.use { it.readBytes() }
+                    if (bytes.isNotEmpty()) {
+                        targetFile.writeBytes(bytes)
+                        return@withContext true
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // Strategy 3: Fallback to enrolled frontal face photo in diagnostic calibration samples if available
+            // This restores profile pictures for existing students whose avatar_url was not yet populated
+            val diagPath = com.vaibhav.facialattendancesystem.BuildConfig.DIAGNOSTIC_SYNC_PATH
+            if (!diagPath.isNullOrBlank()) {
+                val (dStatus, dResp) = executeRequest("/rest/v1/$diagPath?student_id=eq.$userId&select=image_base64,angle_label&limit=5", "GET")
+                if (dStatus in 200..299 && dResp.isNotBlank()) {
+                    val dArray = JSONArray(dResp)
+                    if (dArray.length() > 0) {
+                        var chosenBase64 = ""
+                        for (i in 0 until dArray.length()) {
+                            val item = dArray.getJSONObject(i)
+                            val angle = item.optString("angle_label", "")
+                            val img = item.optString("image_base64", "")
+                            if (img.isNotBlank() && (chosenBase64.isEmpty() || angle.contains("FRONT", ignoreCase = true))) {
+                                chosenBase64 = img
+                            }
+                        }
+                        if (chosenBase64.isNotBlank()) {
+                            val cleanB64 = if (chosenBase64.contains("base64,")) chosenBase64.substringAfter("base64,") else chosenBase64
+                            val decoded = Base64.decode(cleanB64, Base64.DEFAULT)
+                            if (decoded.isNotEmpty()) {
+                                targetFile.writeBytes(decoded)
+                                // Backfill profiles.avatar_url so future lookups hit Strategy 1 directly
+                                uploadProfileAvatar(context, userId)
+                                return@withContext true
+                            }
+                        }
+                    }
                 }
             }
 
@@ -833,14 +1191,15 @@ object CloudSyncManager {
 
             // Attempt deletion from storage bucket
             try {
-                val token = authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
+                val liveToken3 = sessionManagerRef?.getAccessToken()?.ifBlank { null }
+                    ?: authToken?.ifBlank { null } ?: SupabaseConfig.SUPABASE_ANON_KEY
                 val storageUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}/storage/v1/object/avatars/${userId}.jpg"
                 val connection = java.net.URL(storageUrl).openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "DELETE"
                 connection.connectTimeout = 8000
                 connection.readTimeout = 8000
                 connection.setRequestProperty("apikey", SupabaseConfig.SUPABASE_ANON_KEY)
-                connection.setRequestProperty("Authorization", "Bearer $token")
+                connection.setRequestProperty("Authorization", "Bearer $liveToken3")
                 connection.responseCode
             } catch (e: Exception) {
                 // Ignore storage deletion errors
@@ -851,5 +1210,60 @@ object CloudSyncManager {
             e.printStackTrace()
             false
         }
+    }
+
+    /**
+     * Checks https://api.github.com/repos/vaavgit/Swiff-Mark/releases/latest
+     * Returns Triple(latestVersionTag, releaseNotes, downloadUrl) if a newer version than BuildConfig.VERSION_NAME exists, else null.
+     */
+    suspend fun checkForGitHubUpdate(): Triple<String, String, String>? = withContext(Dispatchers.IO) {
+        try {
+            val conn = URL("https://api.github.com/repos/vaavgit/Swiff-Mark/releases/latest").openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Accept", "application/vnd.github+json")
+            conn.setRequestProperty("User-Agent", "SwiffMark-Android")
+            if (conn.responseCode !in 200..299) return@withContext null
+            val body = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
+            val json = JSONObject(body)
+            val tagName = json.optString("tag_name", "").trim()
+            if (tagName.isBlank()) return@withContext null
+
+            val cleanRemote = tagName.removePrefix("v").removePrefix("V").trim()
+            val cleanLocal = com.vaibhav.facialattendancesystem.BuildConfig.VERSION_NAME.removePrefix("v").removePrefix("V").trim()
+
+            if (isRemoteVersionNewer(cleanRemote, cleanLocal)) {
+                val notes = json.optString("body", "Bug fixes and performance improvements.").trim()
+                var downloadUrl = json.optString("html_url", "https://github.com/vaavgit/Swiff-Mark/releases/latest")
+                val assets = json.optJSONArray("assets")
+                if (assets != null && assets.length() > 0) {
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.getJSONObject(i)
+                        val assetUrl = asset.optString("browser_download_url", "")
+                        if (assetUrl.endsWith(".apk", ignoreCase = true)) {
+                            downloadUrl = assetUrl
+                            break
+                        }
+                    }
+                }
+                Triple(tagName, notes, downloadUrl)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun isRemoteVersionNewer(remote: String, local: String): Boolean {
+        val rParts = remote.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
+        val lParts = local.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
+        val maxLen = kotlin.math.max(rParts.size, lParts.size)
+        for (i in 0 until maxLen) {
+            val r = rParts.getOrElse(i) { 0 }
+            val l = lParts.getOrElse(i) { 0 }
+            if (r > l) return true
+            if (r < l) return false
+        }
+        return false
     }
 }

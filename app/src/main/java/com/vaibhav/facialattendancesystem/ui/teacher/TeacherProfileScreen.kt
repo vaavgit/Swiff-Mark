@@ -62,6 +62,25 @@ fun TeacherProfileScreen(
     var profileBitmap by remember(actualTeacherId) { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)) }
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(actualTeacherId) {
+        if (actualTeacherId.isNotBlank()) {
+            val localBmp = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
+            if (localBmp != null) {
+                profileBitmap = localBmp
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CloudSyncManager.uploadProfileAvatar(context, actualTeacherId)
+                }
+            } else {
+                val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CloudSyncManager.downloadAndCacheProfileAvatar(context, actualTeacherId)
+                }
+                if (downloaded) {
+                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
+                }
+            }
+        }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->

@@ -8,7 +8,8 @@ data class UserSession(
     val userName: String,
     val userRole: String, // "STUDENT" or "TEACHER"
     val userEmail: String,
-    val accessToken: String? = null
+    val accessToken: String? = null,
+    val refreshToken: String? = null
 )
 
 class SessionManager(context: Context) {
@@ -21,6 +22,7 @@ class SessionManager(context: Context) {
         private const val KEY_USER_ROLE = "session_user_role"
         private const val KEY_USER_EMAIL = "session_user_email"
         private const val KEY_ACCESS_TOKEN = "session_access_token"
+        private const val KEY_REFRESH_TOKEN = "session_refresh_token"
         private const val KEY_DATA_VERSION = "session_data_version"
         private const val CURRENT_DATA_VERSION = 2
 
@@ -44,7 +46,8 @@ class SessionManager(context: Context) {
         userName: String,
         userRole: String,
         userEmail: String,
-        accessToken: String? = null
+        accessToken: String? = null,
+        refreshToken: String? = null
     ) {
         val editor = prefs.edit()
             .putString(KEY_USER_ID, userId)
@@ -56,6 +59,9 @@ class SessionManager(context: Context) {
         if (!accessToken.isNullOrBlank()) {
             editor.putString(KEY_ACCESS_TOKEN, accessToken)
         }
+        if (!refreshToken.isNullOrBlank()) {
+            editor.putString(KEY_REFRESH_TOKEN, refreshToken)
+        }
         editor.commit()
     }
 
@@ -63,14 +69,21 @@ class SessionManager(context: Context) {
         prefs.edit().putString(KEY_USER_NAME, name.trim()).commit()
     }
 
-    fun updateAccessToken(token: String?) {
+    fun updateTokens(accessToken: String?, refreshToken: String? = null) {
         val editor = prefs.edit()
-        if (token.isNullOrBlank()) {
+        if (accessToken.isNullOrBlank()) {
             editor.remove(KEY_ACCESS_TOKEN)
         } else {
-            editor.putString(KEY_ACCESS_TOKEN, token)
+            editor.putString(KEY_ACCESS_TOKEN, accessToken)
+        }
+        if (!refreshToken.isNullOrBlank()) {
+            editor.putString(KEY_REFRESH_TOKEN, refreshToken)
         }
         editor.commit()
+    }
+
+    fun updateAccessToken(token: String?) {
+        updateTokens(token, null)
     }
 
     fun isTestDataPurged(): Boolean {
@@ -87,11 +100,17 @@ class SessionManager(context: Context) {
         val userRole = prefs.getString(KEY_USER_ROLE, "STUDENT") ?: "STUDENT"
         val userEmail = prefs.getString(KEY_USER_EMAIL, "") ?: ""
         val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
-        return UserSession(userId, userName, userRole, userEmail, accessToken)
+        val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
+        return UserSession(userId, userName, userRole, userEmail, accessToken, refreshToken)
     }
 
     fun getAccessToken(): String? {
         val token = prefs.getString(KEY_ACCESS_TOKEN, null)
+        return if (token.isNullOrBlank()) null else token
+    }
+
+    fun getRefreshToken(): String? {
+        val token = prefs.getString(KEY_REFRESH_TOKEN, null)
         return if (token.isNullOrBlank()) null else token
     }
 
@@ -107,6 +126,7 @@ class SessionManager(context: Context) {
             .remove(KEY_USER_ROLE)
             .remove(KEY_USER_EMAIL)
             .remove(KEY_ACCESS_TOKEN)
+            .remove(KEY_REFRESH_TOKEN)
             .commit()
     }
 

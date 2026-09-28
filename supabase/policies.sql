@@ -49,6 +49,10 @@ USING (
         WHERE ce.student_id = profiles.id
         AND c.teacher_id = auth.uid()::text
     )
+    OR EXISTS (
+        SELECT 1 FROM public.classes c
+        WHERE c.teacher_id = profiles.id
+    )
 );
 
 CREATE POLICY "profiles_insert" ON public.profiles

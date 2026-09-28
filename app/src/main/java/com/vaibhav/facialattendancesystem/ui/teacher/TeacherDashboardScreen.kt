@@ -68,6 +68,25 @@ fun TeacherDashboardScreen(
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var profileBitmap by remember(teacherId) { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, teacherId)) }
 
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotBlank()) {
+            val localBmp = ProfileImageHelper.loadProfileBitmap(context, teacherId)
+            if (localBmp != null) {
+                profileBitmap = localBmp
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadProfileAvatar(context, teacherId)
+                }
+            } else {
+                val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.downloadAndCacheProfileAvatar(context, teacherId)
+                }
+                if (downloaded) {
+                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, teacherId)
+                }
+            }
+        }
+    }
+
     DisposableEffect(lifecycleOwner, teacherId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {

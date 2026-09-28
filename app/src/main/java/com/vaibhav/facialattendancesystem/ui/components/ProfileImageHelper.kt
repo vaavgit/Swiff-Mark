@@ -67,6 +67,35 @@ object ProfileImageHelper {
         }
     }
 
+    fun saveProfileBitmap(context: Context, userId: String, bitmap: Bitmap): Boolean {
+        if (userId.isBlank()) return false
+        return try {
+            val maxDimension = 512
+            val width = bitmap.width
+            val height = bitmap.height
+            val scaled = if (width > maxDimension || height > maxDimension) {
+                val ratio = max(width.toFloat() / maxDimension, height.toFloat() / maxDimension)
+                val targetW = (width / ratio).toInt().coerceAtLeast(1)
+                val targetH = (height / ratio).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+            } else {
+                bitmap
+            }
+
+            val targetFile = getProfileImageFile(context, userId)
+            FileOutputStream(targetFile).use { out ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, 88, out)
+            }
+            if (scaled != bitmap) {
+                scaled.recycle()
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
     fun deleteProfileImage(context: Context, userId: String): Boolean {
         return try {
             val file = getProfileImageFile(context, userId)

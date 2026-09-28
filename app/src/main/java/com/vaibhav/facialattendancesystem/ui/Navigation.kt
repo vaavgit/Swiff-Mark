@@ -66,6 +66,11 @@ import com.vaibhav.facialattendancesystem.ui.theme.FacialAttendanceSystemTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.net.Uri
 
 private fun encodeRouteParam(param: String): String {
@@ -144,6 +149,12 @@ fun AppNavigation(
     val scope = rememberCoroutineScope()
     val sessionManager = remember { com.vaibhav.facialattendancesystem.util.SessionManager(context) }
 
+    // Wire SessionManager into CloudSyncManager so every request always has the live token.
+    // This is the definitive fix for 401 errors on sync — no more stale/null token races.
+    remember(sessionManager, db, context) {
+        com.vaibhav.facialattendancesystem.data.CloudSyncManager.initSessionManager(sessionManager, db, context)
+    }
+
     var isDarkTheme by remember { mutableStateOf(sessionManager.isDarkTheme()) }
     var authError by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -170,6 +181,8 @@ fun AppNavigation(
         }
     }
 
+    var availableUpdate by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+
     LaunchedEffect(Unit) {
         if (!sessionManager.isTestDataPurged()) {
             withContext(Dispatchers.IO) {
@@ -180,6 +193,10 @@ fun AppNavigation(
                 }
                 sessionManager.setTestDataPurged(true)
             }
+        }
+        val updateInfo = com.vaibhav.facialattendancesystem.data.CloudSyncManager.checkForGitHubUpdate()
+        if (updateInfo != null) {
+            availableUpdate = updateInfo
         }
     }
 
@@ -259,7 +276,7 @@ fun AppNavigation(
                                             )
                                             db.teacherDao().insertTeacher(teacher)
                                         }
-                                        sessionManager.saveSession(teacher.teacherId, localUser.name, "TEACHER", localUser.email, authResult.accessToken)
+                                        sessionManager.saveSession(teacher.teacherId, localUser.name, "TEACHER", localUser.email, authResult.accessToken, authResult.refreshToken)
                                         // Ensure profile exists in Supabase and pull all teacher classes & rosters
                                         scope.launch(Dispatchers.IO) {
                                             com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
@@ -306,7 +323,7 @@ fun AppNavigation(
                                             }
                                         }
 
-                                        sessionManager.saveSession(student.studentId, student.fullName, "STUDENT", localUser.email, authResult.accessToken)
+                                        sessionManager.saveSession(student.studentId, student.fullName, "STUDENT", localUser.email, authResult.accessToken, authResult.refreshToken)
 
                                         // Ensure profile exists in Supabase and pull enrolled classes & attendance
                                         scope.launch(Dispatchers.IO) {
@@ -453,7 +470,8 @@ fun AppNavigation(
                                         classSection = section
                                     )
                                     db.studentDao().insertStudent(student)
-                                    sessionManager.saveSession(student.studentId, name, "STUDENT", email, authResult.accessToken)
+                                    sessionManager.saveSession(student.studentId, name, "STUDENT", email, authResult.accessToken, authResult.refreshToken)
+                                    sessionManager.saveLoginCredentials(email, pass, false, true)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
                                         userId = student.studentId,
@@ -516,7 +534,8 @@ fun AppNavigation(
                                         department = department
                                     )
                                     db.teacherDao().insertTeacher(teacher)
-                                    sessionManager.saveSession(teacher.teacherId, name, "TEACHER", email, authResult.accessToken)
+                                    sessionManager.saveSession(teacher.teacherId, name, "TEACHER", email, authResult.accessToken, authResult.refreshToken)
+                                    sessionManager.saveLoginCredentials(email, pass, true, true)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
                                         userId = teacher.teacherId,
@@ -662,6 +681,15 @@ fun AppNavigation(
                                 db.studentDao().updateStudent(updatedStudent)
                             }
 
+                            // Automatically set the captured FRONTAL photo as the student's profile picture if none exists yet
+                            if (!com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.hasCustomProfileImage(context, studentId)) {
+                                val frontalBmp = capturedSteps.firstOrNull { it.stepAngle.contains("FRONT", ignoreCase = true) }?.bitmap
+                                    ?: capturedSteps.firstOrNull()?.bitmap
+                                if (frontalBmp != null) {
+                                    com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper.saveProfileBitmap(context, studentId, frontalBmp)
+                                }
+                            }
+
                             // Navigate immediately so student never waits on network upload
                             withContext(Dispatchers.Main) {
                                 showBanner("Face profile registered! Syncing with cloud... ✓", false)
@@ -670,7 +698,7 @@ fun AppNavigation(
                                 }
                             }
 
-                            // Sync profile and photos to cloud in background
+                            // Sync profile, avatar, and photos to cloud in background
                             if (student != null) {
                                 val updatedStudent = student.copy(enrollmentStatus = 1)
                                 val allVectors = capturedSteps.map { it.embedding } + listOf(averagedVector)
@@ -679,6 +707,7 @@ fun AppNavigation(
                                     embeddings = allVectors,
                                     password = user?.passwordHash
                                 )
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadProfileAvatar(context, studentId)
                                 val angleBitmaps = capturedSteps.map { it.stepAngle to it.bitmap }
                                 com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadCalibrationSamples(studentId, angleBitmaps)
                             }
@@ -703,23 +732,49 @@ fun AppNavigation(
 
                 var isSyncing by remember { mutableStateOf(false) }
 
-                // Auto-sync attendance & enrolled classes from cloud upon viewing dashboard
+                // Initial sync on screen entry + continuous 15s background auto-sync while dashboard is open
                 LaunchedEffect(studentId) {
                     if (studentId.isNotBlank()) {
                         isSyncing = true
                         com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
                         com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
                         isSyncing = false
+                        while (true) {
+                            kotlinx.coroutines.delay(15_000L)
+                            if (!isSyncing) {
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
+                            }
+                        }
                     }
+                }
+
+                // Auto-sync every time the screen is RESUMED (e.g. user returns from class detail screen).
+                // This keeps data fresh across devices without the user having to manually pull-to-refresh.
+                val lifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(lifecycleOwner, studentId) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME && studentId.isNotBlank() && !isSyncing) {
+                            scope.launch(Dispatchers.IO) {
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
+                            }
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
                 student?.let { currentStudent ->
                     // Build classId -> teacher.userId map for avatar downloads
-                    val teacherUserIds = remember(joinedClasses) {
-                        joinedClasses.associate { clazz ->
-                            val resolvedId = db.teacherDao().getTeacherById(clazz.teacherId)?.userId?.ifBlank { null } ?: clazz.teacherId
-                            clazz.classId to resolvedId
-                        }.filter { it.value.isNotBlank() }
+                    // IMPORTANT: getTeacherById is a blocking DAO call — must run on IO thread, never main thread
+                    val teacherUserIds by produceState(initialValue = emptyMap<String, String>(), key1 = joinedClasses) {
+                        value = withContext(Dispatchers.IO) {
+                            joinedClasses.associate { clazz ->
+                                val resolvedId = db.teacherDao().getTeacherById(clazz.teacherId)?.userId?.ifBlank { null } ?: clazz.teacherId
+                                clazz.classId to resolvedId
+                            }.filter { it.value.isNotBlank() }
+                        }
                     }
                     StudentDashboardScreen(
                         student = currentStudent,
@@ -867,11 +922,32 @@ fun AppNavigation(
                     }
                 }
 
-                // Auto-sync teacher classes and rosters when opening dashboard
+                // Auto-sync teacher classes and rosters when opening dashboard + every 15s in background
                 LaunchedEffect(teacherId) {
                     isSyncing = true
                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
                     isSyncing = false
+                    while (true) {
+                        kotlinx.coroutines.delay(15_000L)
+                        if (!isSyncing && teacherId.isNotBlank()) {
+                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
+                        }
+                    }
+                }
+
+                // Auto-sync every time teacher returns to dashboard (e.g. from class details).
+                // Keeps pending enrollment requests and roster changes up to date automatically.
+                val teacherLifecycleOwner = LocalLifecycleOwner.current
+                DisposableEffect(teacherLifecycleOwner, teacherId) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME && teacherId.isNotBlank() && !isSyncing) {
+                            scope.launch(Dispatchers.IO) {
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
+                            }
+                        }
+                    }
+                    teacherLifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { teacherLifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
                 TeacherDashboardScreen(
@@ -1310,8 +1386,14 @@ fun AppNavigation(
 
                                 // Upload to cloud in background (non-blocking)
                                 val clazz = db.clazzDao().getClassById(classId)
+                                if (clazz != null) {
+                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadNewClass(clazz)
+                                }
                                 val teacherId = clazz?.teacherId ?: sessionManager.getSession()?.userId
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadAttendanceSession(session, records, teacherId)
+                                val uploaded = com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadAttendanceSession(session, records, teacherId)
+                                if (uploaded) {
+                                    db.attendanceDao().markSessionSynced(session.sessionId)
+                                }
                             } catch (e: Throwable) {
                                 e.printStackTrace()
                                 withContext(Dispatchers.Main) {
@@ -1325,7 +1407,6 @@ fun AppNavigation(
                 )
             }
         }
-
 
             composable(Screen.AttendanceHistory.route) { backStack ->
                 val classId = backStack.arguments?.getString("classId") ?: ""
@@ -1367,16 +1448,6 @@ fun AppNavigation(
 
                 LaunchedEffect(classId) {
                     syncSessions()
-                    withContext(Dispatchers.IO) {
-                        try {
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncClassRosterForTeacher(classId, db)
-                        } catch (e: Exception) { e.printStackTrace() }
-                        val enrolledIds = db.classEnrollmentDao().getEnrolledStudentIds(classId)
-                        val students = if (enrolledIds.isNotEmpty()) db.studentDao().getStudentsByIds(enrolledIds) else emptyList()
-                        withContext(Dispatchers.Main) {
-                            enrolledStudentsForExport = students
-                        }
-                    }
                     // Also sync student attendance in case a student navigated here
                     val currentSession = sessionManager.getSession()
                     if (currentSession?.userRole == "STUDENT") {
@@ -1536,6 +1607,46 @@ fun AppNavigation(
                     onBack = { navController.popBackStack() }
                 )
             }
+        }
+
+        val currentUpdate = availableUpdate
+        if (currentUpdate != null) {
+            val (latestTag, releaseNotes, downloadUrl) = currentUpdate
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { availableUpdate = null },
+                title = {
+                    Text("🚀 Update Available ($latestTag)", fontWeight = FontWeight.Bold)
+                },
+                text = {
+                    Text(
+                        text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            availableUpdate = null
+                            try {
+                                val intent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(downloadUrl)
+                                )
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    ) {
+                        Text("Download Update")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { availableUpdate = null }) {
+                        Text("Later")
+                    }
+                }
+            )
         }
 
         InAppBanner(

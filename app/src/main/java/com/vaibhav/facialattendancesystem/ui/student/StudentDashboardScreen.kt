@@ -65,6 +65,25 @@ fun StudentDashboardScreen(
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var profileBitmap by remember { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId)) }
 
+    LaunchedEffect(student.studentId) {
+        if (student.studentId.isNotBlank()) {
+            val localBmp = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+            if (localBmp != null) {
+                profileBitmap = localBmp
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CloudSyncManager.uploadProfileAvatar(context, student.studentId)
+                }
+            } else {
+                val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
+                }
+                if (downloaded) {
+                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+                }
+            }
+        }
+    }
+
     DisposableEffect(lifecycleOwner, student.studentId) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {

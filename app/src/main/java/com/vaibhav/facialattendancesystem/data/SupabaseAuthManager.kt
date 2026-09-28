@@ -122,11 +122,14 @@ object SupabaseAuthManager {
         if (status in 200..299) {
             try {
                 val obj = JSONObject(res)
-                val userId = obj.optString("id", "")
-                val confirmedAt = obj.optString("confirmed_at", "")
-                val isAlreadyConfirmed = confirmedAt.isNotBlank() && confirmedAt != "null"
+                val userObj = obj.optJSONObject("user") ?: obj
+                val userId = userObj.optString("id", obj.optString("id", ""))
+                val confirmedAt = userObj.optString("confirmed_at", userObj.optString("email_confirmed_at", obj.optString("confirmed_at", "")))
+                val accessToken = if (obj.has("access_token") && !obj.isNull("access_token")) obj.getString("access_token") else null
+                val refreshToken = if (obj.has("refresh_token") && !obj.isNull("refresh_token")) obj.getString("refresh_token") else null
+                val isAlreadyConfirmed = !accessToken.isNullOrBlank() || (confirmedAt.isNotBlank() && confirmedAt != "null")
 
-                if (!isAlreadyConfirmed) {
+                if (!isAlreadyConfirmed || userId.isBlank()) {
                     AuthResult.NeedsEmailConfirmation(
                         email = cleanEmail,
                         message = "Verification email sent to $cleanEmail! Please confirm your email before logging in."
@@ -137,8 +140,8 @@ object SupabaseAuthManager {
                         email = cleanEmail,
                         fullName = fullName,
                         role = role.uppercase(),
-                        accessToken = if (obj.has("access_token")) obj.getString("access_token") else null,
-                        refreshToken = if (obj.has("refresh_token")) obj.getString("refresh_token") else null,
+                        accessToken = accessToken,
+                        refreshToken = refreshToken,
                         rollOrSubject = rollOrSubject,
                         sectionOrDept = sectionOrDept
                     )
@@ -293,6 +296,53 @@ object SupabaseAuthManager {
         } else {
             val msg = try { JSONObject(res).optString("msg", "Failed to update password") } catch (_: Exception) { "Error $status" }
             Pair(false, msg)
+        }
+    }
+
+    /**
+     * Synchronously refreshes an expired JWT access token using a Supabase refresh_token.
+     * Must be called from an IO background thread.
+     * Returns Pair(newAccessToken, newRefreshToken) or null if refresh fails.
+     */
+    fun refreshSessionBlocking(refreshToken: String): Pair<String, String?>? {
+        if (refreshToken.isBlank() || !SupabaseConfig.isConfigured) return null
+        return try {
+            val body = JSONObject().apply {
+                put("refresh_token", refreshToken.trim())
+            }.toString()
+            val (status, res) = executeAuthRequest("/auth/v1/token?grant_type=refresh_token", "POST", body)
+            if (status in 200..299) {
+                val obj = JSONObject(res)
+                val newAccess = obj.optString("access_token", "")
+                val newRefresh = obj.optString("refresh_token", "").ifBlank { refreshToken }
+                if (newAccess.isNotBlank()) Pair(newAccess, newRefresh) else null
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Synchronously signs in with email & password to obtain a fresh JWT when no valid refresh_token exists.
+     * Must be called from an IO background thread.
+     * Returns Pair(newAccessToken, newRefreshToken) or null if login fails.
+     */
+    fun signInBlocking(email: String, password: String): Pair<String, String?>? {
+        if (email.isBlank() || password.isBlank() || !SupabaseConfig.isConfigured) return null
+        return try {
+            val body = JSONObject().apply {
+                put("email", email.trim())
+                put("password", password.trim())
+            }.toString()
+            val (status, res) = executeAuthRequest("/auth/v1/token?grant_type=password", "POST", body)
+            if (status in 200..299) {
+                val obj = JSONObject(res)
+                val newAccess = obj.optString("access_token", "")
+                val newRefresh = obj.optString("refresh_token", "").ifBlank { null }
+                if (newAccess.isNotBlank()) Pair(newAccess, newRefresh) else null
+            } else null
+        } catch (_: Exception) {
+            null
         }
     }
 }

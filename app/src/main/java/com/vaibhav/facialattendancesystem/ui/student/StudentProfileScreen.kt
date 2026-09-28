@@ -58,6 +58,25 @@ fun StudentProfileScreen(
     var profileBitmap by remember(student.studentId) { mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId)) }
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(student.studentId) {
+        if (student.studentId.isNotBlank()) {
+            val localBmp = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+            if (localBmp != null) {
+                profileBitmap = localBmp
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CloudSyncManager.uploadProfileAvatar(context, student.studentId)
+                }
+            } else {
+                val downloaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
+                }
+                if (downloaded) {
+                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+                }
+            }
+        }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
