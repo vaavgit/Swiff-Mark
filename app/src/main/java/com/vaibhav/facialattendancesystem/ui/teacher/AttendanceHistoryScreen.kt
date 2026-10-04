@@ -5,6 +5,8 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -341,46 +343,50 @@ fun AdminExportDialog(
                 // Date Range Filter Chips
                 Text("Select Period / Date Range:", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FilterChip(
                         selected = selectedFilter == 0,
                         onClick = { selectedFilter = 0 },
-                        label = { Text("All Time", fontSize = 11.sp) }
+                        label = { Text("All Time", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                     FilterChip(
                         selected = selectedFilter == 1,
                         onClick = { selectedFilter = 1 },
-                        label = { Text("This Month", fontSize = 11.sp) }
+                        label = { Text("This Month", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                     FilterChip(
                         selected = selectedFilter == 2,
                         onClick = { selectedFilter = 2 },
-                        label = { Text("Last 30 Days", fontSize = 11.sp) }
+                        label = { Text("Last 30 Days", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                 }
 
                 // Defaulter Threshold Selection
                 Text("Attendance Shortage Criteria:", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FilterChip(
                         selected = selectedThreshold == 75,
                         onClick = { selectedThreshold = 75 },
-                        label = { Text("75% (Standard)", fontSize = 11.sp) }
+                        label = { Text("75% (Standard)", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                     FilterChip(
                         selected = selectedThreshold == 60,
                         onClick = { selectedThreshold = 60 },
-                        label = { Text("60% (Condoned)", fontSize = 11.sp) }
+                        label = { Text("60% (Condoned)", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                     FilterChip(
                         selected = selectedThreshold == 80,
                         onClick = { selectedThreshold = 80 },
-                        label = { Text("80% (Lab/Strict)", fontSize = 11.sp) }
+                        label = { Text("80% (Lab/Strict)", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                 }
 
@@ -574,23 +580,25 @@ fun SessionRosterDialog(
 
                 // Quick filter chips
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FilterChip(
                         selected = filterMode == 0,
                         onClick = { filterMode = 0 },
-                        label = { Text("All (${studentList.size})", fontSize = 11.sp) }
+                        label = { Text("All (${studentList.size})", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                     FilterChip(
                         selected = filterMode == 1,
                         onClick = { filterMode = 1 },
-                        label = { Text("Present ($presentCount)", fontSize = 11.sp) }
+                        label = { Text("Present ($presentCount)", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                     FilterChip(
                         selected = filterMode == 2,
                         onClick = { filterMode = 2 },
-                        label = { Text("Absent ($absentCount)", fontSize = 11.sp) }
+                        label = { Text("Absent ($absentCount)", fontSize = 11.sp, maxLines = 1, softWrap = false) }
                     )
                 }
 
