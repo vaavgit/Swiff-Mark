@@ -62,6 +62,16 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper
+import com.vaibhav.facialattendancesystem.ui.theme.ErrorRose
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttendanceHistoryScreen(
@@ -78,11 +88,13 @@ fun AttendanceHistoryScreen(
     onExportCsv: (AttendanceSession) -> Unit,
     onExportAdminReport: ((startDate: Long?, endDate: Long?, threshold: Int) -> Unit)? = null,
     onExportFullReport: (() -> Unit)? = null,
+    onToggleAttendanceRecord: ((sessionId: String, studentId: String, isPresent: Boolean) -> Unit)? = null,
     onBack: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.getDefault())
     val borderColor = adaptiveBorderColor()
     var showAdminExportDialog by remember { mutableStateOf(false) }
+    var selectedSessionForRoster by remember { mutableStateOf<AttendanceSession?>(null) }
 
     Column(
         modifier = Modifier
@@ -144,12 +156,23 @@ fun AttendanceHistoryScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(sessions) { session ->
+                        val sessionRecs = remember(session.sessionId, allRecords) {
+                            allRecords.filter { it.sessionId == session.sessionId }
+                        }
+                        val presentCount = remember(sessionRecs) { sessionRecs.count { it.markedPresent == 1 } }
+                        val totalCount = remember(sessionRecs, allStudents) {
+                            if (allStudents.isNotEmpty()) allStudents.size else sessionRecs.size
+                        }
+                        val absentCount = remember(presentCount, totalCount) { (totalCount - presentCount).coerceAtLeast(0) }
+                        val hasOverrides = remember(sessionRecs) { sessionRecs.any { it.manualOverride == 1 } }
+
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+                                .clickable { selectedSessionForRoster = session }
                                 .padding(14.dp)
                         ) {
                             Column {
@@ -179,18 +202,52 @@ fun AttendanceHistoryScreen(
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Present: $presentCount · Absent: $absentCount · Total: $totalCount",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (hasOverrides) {
+                                        Text(
+                                            text = "✏️ Overridden",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = WarningAmber
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Start: ${session.photo1FacesDetected} detected · End: ${session.photo2FacesDetected ?: 0} detected",
-                                    fontSize = 11.5.sp,
+                                    fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
-                                OutlinedButton(
-                                    onClick = { onExportCsv(session) },
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.fillMaxWidth().height(36.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text("Export Single Lecture CSV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    Button(
+                                        onClick = { selectedSessionForRoster = session },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
+                                        modifier = Modifier.weight(1f).height(36.dp)
+                                    ) {
+                                        Text("👥 Inspect & Edit Roster", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onExportCsv(session) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.height(36.dp)
+                                    ) {
+                                        Text("📄 CSV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                    }
                                 }
                             }
                         }
@@ -207,6 +264,18 @@ fun AttendanceHistoryScreen(
             onExport = { start, end, threshold ->
                 showAdminExportDialog = false
                 onExportAdminReport(start, end, threshold)
+            }
+        )
+    }
+
+    selectedSessionForRoster?.let { session ->
+        SessionRosterDialog(
+            session = session,
+            allStudents = allStudents,
+            allRecords = allRecords,
+            onDismiss = { selectedSessionForRoster = null },
+            onToggleStatus = { studentId, currentPresent ->
+                onToggleAttendanceRecord?.invoke(session.sessionId, studentId, !currentPresent)
             }
         )
     }
@@ -358,7 +427,300 @@ fun AdminExportDialog(
     )
 }
 
-private fun shareCsvFile(context: Context, file: java.io.File, title: String) {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SessionRosterDialog(
+    session: AttendanceSession,
+    allStudents: List<Student>,
+    allRecords: List<AttendanceRecord>,
+    onDismiss: () -> Unit,
+    onToggleStatus: (studentId: String, currentPresent: Boolean) -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy - hh:mm a", Locale.getDefault()) }
+    val borderColor = adaptiveBorderColor()
+    var searchQuery by remember { mutableStateOf("") }
+    var filterMode by remember { mutableStateOf(0) } // 0: All, 1: Present, 2: Absent
+
+    val sessionRecords = remember(session.sessionId, allRecords) {
+        allRecords.filter { it.sessionId == session.sessionId }
+    }
+    val recordMap = remember(sessionRecords) {
+        sessionRecords.associateBy { it.studentId }
+    }
+
+    val studentList = remember(allStudents, sessionRecords) {
+        if (allStudents.isNotEmpty()) {
+            allStudents.sortedBy { it.rollNumber }
+        } else {
+            sessionRecords.map { rec ->
+                Student(
+                    studentId = rec.studentId,
+                    userId = rec.studentId,
+                    fullName = "Student ${rec.studentId.take(5)}",
+                    rollNumber = 0,
+                    email = "",
+                    enrollmentStatus = 1
+                )
+            }
+        }
+    }
+
+    val presentCount = remember(studentList, recordMap) {
+        studentList.count { recordMap[it.studentId]?.markedPresent == 1 }
+    }
+    val absentCount = remember(studentList, presentCount) {
+        (studentList.size - presentCount).coerceAtLeast(0)
+    }
+
+    val filteredList = remember(studentList, searchQuery, filterMode, recordMap) {
+        studentList.filter { s ->
+            val isPres = recordMap[s.studentId]?.markedPresent == 1
+            val matchesFilter = when (filterMode) {
+                1 -> isPres
+                2 -> !isPres
+                else -> true
+            }
+            val matchesSearch = searchQuery.isBlank() ||
+                s.fullName.contains(searchQuery, ignoreCase = true) ||
+                s.rollNumber.toString().contains(searchQuery) ||
+                s.email.contains(searchQuery, ignoreCase = true)
+            matchesFilter && matchesSearch
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(
+                    text = "Lecture Roster & Corrections",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = dateFormat.format(Date(session.sessionDate)),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PrimaryCyan,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Summary Badges
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SuccessGreen.copy(alpha = 0.12f))
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✓ $presentCount Present", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = SuccessGreen)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ErrorRose.copy(alpha = 0.12f))
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✕ $absentCount Absent", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = ErrorRose)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Total: ${studentList.size}", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                // Search field
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search student name / roll...", fontSize = 12.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Text("✕", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PrimaryCyan,
+                        unfocusedBorderColor = borderColor,
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+
+                // Quick filter chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = filterMode == 0,
+                        onClick = { filterMode = 0 },
+                        label = { Text("All (${studentList.size})", fontSize = 11.sp) }
+                    )
+                    FilterChip(
+                        selected = filterMode == 1,
+                        onClick = { filterMode = 1 },
+                        label = { Text("Present ($presentCount)", fontSize = 11.sp) }
+                    )
+                    FilterChip(
+                        selected = filterMode == 2,
+                        onClick = { filterMode = 2 },
+                        label = { Text("Absent ($absentCount)", fontSize = 11.sp) }
+                    )
+                }
+
+                Text(
+                    text = "Tap any student's status to toggle Present ↔ Absent manually.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Student list
+                if (filteredList.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No matching students found.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredList, key = { it.studentId }) { student ->
+                            val record = recordMap[student.studentId]
+                            val isPresent = record?.markedPresent == 1
+                            val isOverridden = record?.manualOverride == 1
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isPresent) SuccessGreen.copy(alpha = 0.15f) else PrimaryCyan.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = ProfileImageHelper.getInitials(student.fullName, "S"),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isPresent) SuccessGreen else PrimaryCyan
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = student.fullName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Roll ${student.rollNumber}",
+                                                    fontSize = 11.5.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                if (isOverridden) {
+                                                    Text(
+                                                        text = "✏️ Overridden",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = WarningAmber
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Toggle Button
+                                    Button(
+                                        onClick = { onToggleStatus(student.studentId, isPresent) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isPresent) SuccessGreen.copy(alpha = 0.2f) else ErrorRose.copy(alpha = 0.2f),
+                                            contentColor = if (isPresent) SuccessGreen else ErrorRose
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.height(34.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isPresent) "✓ Present" else "✕ Absent",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.5.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
+            ) {
+                Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+fun shareCsvFile(context: Context, file: java.io.File, title: String) {
     try {
         val uri = androidx.core.content.FileProvider.getUriForFile(
             context,
@@ -607,6 +969,59 @@ fun exportClassAttendanceCsv(
         allRecords = allRecords,
         onResult = onResult
     )
+}
+
+/**
+ * 1-Tap Defaulters CSV Export (< 75% Attendance).
+ * Creates and shares an official attendance shortage notice with student details,
+ * classes attended, attendance percentage, and minimum lectures required to reach 75%.
+ */
+fun exportDefaultersCsv(
+    context: Context,
+    className: String,
+    section: String = "",
+    totalSessions: Int,
+    defaulters: List<Triple<Student, Int, Int>>, // (Student, AttendedCount, PctInt)
+    onResult: ((Boolean, String) -> Unit)? = null
+) {
+    try {
+        val dir = context.getExternalFilesDir(null) ?: context.filesDir
+        val dateFileStr = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+        val safeName = className.replace("[^a-zA-Z0-9_]".toRegex(), "_")
+        val file = java.io.File(dir, "Defaulters_${safeName}_$dateFileStr.csv")
+        val writer = java.io.FileWriter(file)
+
+        val reportGeneratedTimestamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date())
+
+        writer.write("========================================================================================\n")
+        writer.write("SWIFF MARK - ATTENDANCE DEFAULTERS LIST (< 75%)\n")
+        writer.write("========================================================================================\n")
+        writer.write("Class / Course,\"$className\"\n")
+        writer.write("Section,\"${section.ifBlank { "A" }}\"\n")
+        writer.write("Total Sessions Conducted,$totalSessions\n")
+        writer.write("Total Defaulters Found,${defaulters.size}\n")
+        writer.write("Report Generated,\"$reportGeneratedTimestamp\"\n")
+        writer.write("========================================================================================\n\n")
+
+        writer.write("Roll No,Student Name,Email,Classes Attended,Total Classes,Attendance %,Shortage (Needed to Reach 75%),Status\n")
+        for ((student, attended, pct) in defaulters.sortedBy { it.second }) {
+            val needed = (3 * totalSessions - 4 * attended).coerceAtLeast(1)
+            writer.write("${student.rollNumber},\"${student.fullName}\",\"${student.email}\",$attended,$totalSessions,$pct%,Must attend next $needed classes,DEFAULTER\n")
+        }
+
+        writer.write("\n========================================================================================\n")
+        writer.write("Faculty Signature: _______________________      HOD Verification: _______________________\n")
+        writer.write("Date: _______________________\n")
+        writer.write("========================================================================================\n")
+
+        writer.flush()
+        writer.close()
+
+        shareCsvFile(context, file, "Defaulters List - $className")
+        onResult?.invoke(true, "Defaulter list exported: ${file.name}")
+    } catch (e: Exception) {
+        onResult?.invoke(false, "Export Failed: ${e.localizedMessage ?: e.message}")
+    }
 }
 
 

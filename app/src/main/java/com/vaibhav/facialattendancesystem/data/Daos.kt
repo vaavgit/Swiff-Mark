@@ -262,6 +262,9 @@ interface AttendanceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertAttendanceRecords(records: List<AttendanceRecord>): List<Long>
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertAttendanceRecord(record: AttendanceRecord): Long
+
     @Query("SELECT * FROM attendance_records WHERE session_id = :sessionId")
     fun getRecordsForSession(sessionId: String): List<AttendanceRecord>
 

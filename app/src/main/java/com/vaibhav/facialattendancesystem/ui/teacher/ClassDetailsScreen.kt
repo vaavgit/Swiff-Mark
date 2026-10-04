@@ -60,9 +60,39 @@ fun ClassDetailsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val showBanner = LocalBannerManager.current
     var studentToResetPassword by remember { mutableStateOf<Student?>(null) }
     var studentToRemove by remember { mutableStateOf<Student?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilterMode by remember { mutableStateOf(0) } // 0: All, 1: Low Attendance (< 75%)
+    var showDefaultersDialog by remember { mutableStateOf(false) }
+
+    val defaultersList = remember(enrolledStudents, attendanceRecords, totalSessionsCount) {
+        if (totalSessionsCount == 0) emptyList()
+        else enrolledStudents.mapNotNull { student ->
+            val attended = attendanceRecords.count { it.studentId == student.studentId && it.markedPresent == 1 }
+            val pct = ((attended.toFloat() / totalSessionsCount) * 100).toInt()
+            if (pct < 75) Triple(student, attended, pct) else null
+        }.sortedBy { it.second }
+    }
+
+    val filteredStudents = remember(enrolledStudents, searchQuery, selectedFilterMode, attendanceRecords, totalSessionsCount) {
+        enrolledStudents.filter { student ->
+            val attendedCount = attendanceRecords.count { it.studentId == student.studentId && it.markedPresent == 1 }
+            val pct = if (totalSessionsCount > 0) ((attendedCount.toFloat() / totalSessionsCount) * 100).toInt() else 0
+            val matchesFilter = when (selectedFilterMode) {
+                1 -> totalSessionsCount > 0 && pct < 75
+                else -> true
+            }
+            val matchesQuery = searchQuery.isBlank() ||
+                student.fullName.contains(searchQuery, ignoreCase = true) ||
+                student.rollNumber.toString().contains(searchQuery) ||
+                student.email.contains(searchQuery, ignoreCase = true) ||
+                (student.classSection ?: "").contains(searchQuery, ignoreCase = true)
+            matchesFilter && matchesQuery
+        }
+    }
 
     // Rotating sync icon animation
     val rotation by rememberInfiniteTransition(label = "sync").animateFloat(
@@ -152,7 +182,6 @@ fun ClassDetailsScreen(
             )
 
             // ── Code Card (Prototype row) ─────────────────────────────
-            val showBanner = LocalBannerManager.current
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -187,29 +216,45 @@ fun ClassDetailsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // ── 2-Stat Grid: Students | Sessions ──────────────────────
+            // ── 3-Stat Grid: Students | Sessions | Defaulters ──────────
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 listOf(
-                    Triple("${enrolledStudents.size}", "Students", PrimaryCyan),
-                    Triple("$totalSessionsCount", "Sessions", SuccessGreen)
-                ).forEach { (value, label, color) ->
+                    Triple("${enrolledStudents.size}", "Students", PrimaryCyan) to {},
+                    Triple("$totalSessionsCount", "Sessions", SuccessGreen) to {},
+                    Triple("${defaultersList.size}", "Defaulters (<75%)", if (defaultersList.isNotEmpty()) ErrorRose else MaterialTheme.colorScheme.onSurfaceVariant) to {
+                        if (totalSessionsCount > 0) showDefaultersDialog = true
+                    }
+                ).forEach { (stat, onClickAction) ->
+                    val (value, label, color) = stat
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surface)
                             .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                            .clickable { onClickAction() }
                             .padding(vertical = 12.dp, horizontal = 4.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
-                            Text(label, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         }
                     }
+                }
+            }
+
+            if (totalSessionsCount > 0 && defaultersList.isNotEmpty()) {
+                Button(
+                    onClick = { showDefaultersDialog = true },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRose.copy(alpha = 0.9f)),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).height(38.dp)
+                ) {
+                    Text("⚠️ View Defaulter List & Notice (${defaultersList.size} < 75%)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
 
@@ -340,14 +385,76 @@ fun ClassDetailsScreen(
                 )
             }
 
-            // ── Roster Header ──────────────────────────────────────────
-            Text(
-                text = "Enrolled Students (${enrolledStudents.size})",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(bottom = 8.dp)
+            // ── Roster Header, Search & Filter ──────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Enrolled Students (${filteredStudents.size}${if (filteredStudents.size != enrolledStudents.size) "/${enrolledStudents.size}" else ""})",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                if (defaultersList.isNotEmpty() && totalSessionsCount > 0) {
+                    Text(
+                        text = "⚠️ Defaulters: ${defaultersList.size}",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ErrorRose,
+                        modifier = Modifier.clickable { showDefaultersDialog = true }
+                    )
+                }
+            }
+
+            // Search Bar
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search by name, roll no, email...", fontSize = 12.5.sp) },
+                leadingIcon = { Text("🔍", fontSize = 13.sp) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Text("✕", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = PrimaryCyan,
+                    unfocusedBorderColor = borderColor,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                )
             )
+
+            // Quick Filter Chips
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = selectedFilterMode == 0,
+                    onClick = { selectedFilterMode = 0 },
+                    label = { Text("All (${enrolledStudents.size})", fontSize = 11.5.sp) }
+                )
+                FilterChip(
+                    selected = selectedFilterMode == 1,
+                    onClick = { selectedFilterMode = 1 },
+                    label = {
+                        Text(
+                            "⚠️ Low Attendance (< 75%) (${defaultersList.size})",
+                            fontSize = 11.5.sp,
+                            color = if (selectedFilterMode == 1 || defaultersList.isNotEmpty()) ErrorRose else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                )
+            }
 
             PullToRefreshBox(
                 isRefreshing = isSyncing,
@@ -368,12 +475,35 @@ fun ClassDetailsScreen(
                             lineHeight = 22.sp
                         )
                     }
+                } else if (filteredStudents.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "No students match your search or filter.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.5.sp
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    searchQuery = ""
+                                    selectedFilterMode = 0
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Clear Search & Filter", fontSize = 12.sp)
+                            }
+                        }
+                    }
                 } else {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(enrolledStudents) { student ->
+                        items(filteredStudents) { student ->
                             val isEnrolled = student.enrollmentStatus == 1
                             val attendedCount = attendanceRecords.count { it.studentId == student.studentId && it.markedPresent == 1 }
                             val pctInt = if (totalSessionsCount > 0) ((attendedCount.toFloat() / totalSessionsCount) * 100).toInt() else 0
@@ -699,6 +829,236 @@ fun ClassDetailsScreen(
                 }
             )
         }
+
+        if (showDefaultersDialog) {
+            DefaulterListDialog(
+                clazz = clazz,
+                totalSessionsCount = totalSessionsCount,
+                defaulters = defaultersList,
+                onDismiss = { showDefaultersDialog = false },
+                onCopyNotice = { notice ->
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Defaulters Notice", notice)
+                    clipboard.setPrimaryClip(clip)
+                    showBanner("✓ Defaulters notice copied to clipboard", false)
+                },
+                onExportCsv = {
+                    exportDefaultersCsv(
+                        context = context,
+                        className = clazz.className,
+                        section = clazz.section,
+                        totalSessions = totalSessionsCount,
+                        defaulters = defaultersList
+                    ) { ok, msg ->
+                        showBanner(msg, !ok)
+                    }
+                }
+            )
+        }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DefaulterListDialog(
+    clazz: Clazz,
+    totalSessionsCount: Int,
+    defaulters: List<Triple<Student, Int, Int>>, // (Student, AttendedCount, PctInt)
+    onDismiss: () -> Unit,
+    onCopyNotice: (String) -> Unit,
+    onExportCsv: () -> Unit
+) {
+    val borderColor = adaptiveBorderColor()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Attendance Defaulters",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = ErrorRose
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ErrorRose.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "< 75%",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = ErrorRose
+                        )
+                    }
+                }
+                Text(
+                    text = "${clazz.className} · $totalSessionsCount total lectures",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (defaulters.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "🎉 Outstanding! No students have attendance below 75% across $totalSessionsCount conducted sessions.",
+                            fontSize = 13.5.sp,
+                            textAlign = TextAlign.Center,
+                            color = SuccessGreen,
+                            lineHeight = 20.sp
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "${defaulters.size} student${if (defaulters.size > 1) "s" else ""} currently below 75% attendance criteria:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(defaulters, key = { it.first.studentId }) { (student, attended, pct) ->
+                            val needed = (3 * totalSessionsCount - 4 * attended).coerceAtLeast(1)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = student.fullName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "Roll ${student.rollNumber} · ${student.email}",
+                                                fontSize = 11.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(ErrorRose.copy(alpha = 0.15f))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "$pct%",
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 12.sp,
+                                                color = ErrorRose
+                                            )
+                                        }
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { if (totalSessionsCount > 0) (attended.toFloat() / totalSessionsCount).coerceIn(0f, 1f) else 0f },
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = ErrorRose,
+                                        trackColor = MaterialTheme.colorScheme.surface
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "$attended / $totalSessionsCount attended",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "Needs next $needed classes",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = WarningAmber
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Notice generation helper
+                    val noticeText = remember(defaulters, clazz, totalSessionsCount) {
+                        val sb = StringBuilder()
+                        sb.append("⚠️ ATTENDANCE DEFAULTERS NOTICE (< 75%)\n")
+                        sb.append("Class: ${clazz.className} (Sec ${clazz.section})\n")
+                        sb.append("Total Lectures Conducted: $totalSessionsCount\n")
+                        sb.append("Defaulter Count: ${defaulters.size}\n\n")
+                        sb.append("Students with Attendance Shortage:\n")
+                        defaulters.forEachIndexed { idx, (s, att, pct) ->
+                            val needed = (3 * totalSessionsCount - 4 * att).coerceAtLeast(1)
+                            sb.append("${idx + 1}. [Roll ${s.rollNumber}] ${s.fullName} - $att/$totalSessionsCount ($pct%) | Needs next $needed classes\n")
+                        }
+                        sb.append("\nPlease meet your faculty/course coordinator immediately.")
+                        sb.toString()
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onCopyNotice(noticeText) },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f).height(38.dp)
+                        ) {
+                            Text("📋 Copy Notice", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                        Button(
+                            onClick = onExportCsv,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
+                            modifier = Modifier.weight(1f).height(38.dp)
+                        ) {
+                            Text("📤 Export CSV", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
+            ) {
+                Text("Close", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
 }

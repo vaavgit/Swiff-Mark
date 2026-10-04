@@ -1470,6 +1470,11 @@ fun AppNavigation(
                 }
 
                 LaunchedEffect(classId) {
+                    withContext(Dispatchers.IO) {
+                        val enrolledIds = db.classEnrollmentDao().getEnrolledStudentIds(classId)
+                        val students = if (enrolledIds.isNotEmpty()) db.studentDao().getStudentsByIds(enrolledIds) else emptyList()
+                        withContext(Dispatchers.Main) { enrolledStudentsForExport = students }
+                    }
                     syncSessions()
                     // Also sync student attendance in case a student navigated here
                     val currentSession = sessionManager.getSession()
@@ -1497,6 +1502,29 @@ fun AppNavigation(
                     allRecords = classRecords,
                     isSyncing = isSyncingSessions,
                     onRefresh = syncSessions,
+                    onToggleAttendanceRecord = { sessionId, studentId, isPresent ->
+                        scope.launch(Dispatchers.IO) {
+                            val existing = db.attendanceDao().getRecordsForSession(sessionId).find { it.studentId == studentId }
+                            val updatedRecord = existing?.copy(
+                                markedPresent = if (isPresent) 1 else 0,
+                                manualOverride = 1,
+                                overrideNotes = "Manual override by teacher"
+                            ) ?: com.vaibhav.facialattendancesystem.data.AttendanceRecord(
+                                sessionId = sessionId,
+                                studentId = studentId,
+                                markedPresent = if (isPresent) 1 else 0,
+                                manualOverride = 1,
+                                overrideNotes = "Manual override by teacher"
+                            )
+                            db.attendanceDao().insertAttendanceRecord(updatedRecord)
+                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.updateSingleAttendanceRecord(sessionId, studentId, isPresent)
+                            withContext(Dispatchers.Main) {
+                                val sName = enrolledStudentsForExport.find { it.studentId == studentId }?.fullName ?: "Student"
+                                val st = if (isPresent) "Present" else "Absent"
+                                showBanner("✓ $sName marked $st", false)
+                            }
+                        }
+                    },
                     onExportCsv = { session ->
                         scope.launch(Dispatchers.IO) {
                             val records = db.attendanceDao().getRecordsForSession(session.sessionId)

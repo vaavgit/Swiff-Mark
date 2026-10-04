@@ -419,6 +419,25 @@ object CloudSyncManager {
         } catch (e: Exception) { false }
     }
 
+    suspend fun updateSingleAttendanceRecord(sessionId: String, studentId: String, isPresent: Boolean): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val recordJson = JSONObject().apply {
+                put("session_id", sessionId)
+                put("student_id", studentId)
+                put("marked_present", isPresent)
+            }
+            val (status, _) = executeRequest(
+                "/rest/v1/attendance_records?on_conflict=session_id,student_id",
+                "POST",
+                recordJson.toString(),
+                mapOf("Prefer" to "resolution=merge-duplicates,return=minimal")
+            )
+            status in 200..299
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun syncStudentAttendance(studentId: String, db: AppDatabase, context: Context? = null, notify: Boolean = false): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
             val query = "/rest/v1/attendance_records?student_id=eq.$studentId&select=*,attendance_sessions(*,classes(*))"
