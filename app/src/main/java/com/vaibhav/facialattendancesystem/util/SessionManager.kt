@@ -196,16 +196,26 @@ class SessionManager(context: Context) {
         return prefs.getBoolean("notified_sessions_init_$studentId", false)
     }
 
-    fun getNotifiedSessionIds(studentId: String): Set<String> {
-        return prefs.getStringSet("notified_session_ids_$studentId", emptySet()) ?: emptySet()
+    fun getNotifiedEvents(studentId: String): Set<String> {
+        val raw = prefs.getStringSet("notified_events_$studentId", null)
+        if (raw != null) return raw.toSet()
+        return prefs.getStringSet("notified_session_ids_$studentId", emptySet())?.toSet() ?: emptySet()
     }
 
-    fun markSessionsNotified(studentId: String, sessionIds: Collection<String>) {
-        val current = getNotifiedSessionIds(studentId).toMutableSet()
-        current.addAll(sessionIds)
+    fun markEventsNotified(studentId: String, events: Collection<String>) {
+        if (events.isEmpty()) return
+        val current = HashSet(getNotifiedEvents(studentId))
+        current.addAll(events)
         prefs.edit()
-            .putStringSet("notified_session_ids_$studentId", current)
+            .putStringSet("notified_events_$studentId", HashSet(current))
+            .putStringSet("notified_session_ids_$studentId", HashSet(current))
             .putBoolean("notified_sessions_init_$studentId", true)
             .commit()
+    }
+
+    fun getNotifiedSessionIds(studentId: String): Set<String> = getNotifiedEvents(studentId)
+
+    fun markSessionsNotified(studentId: String, sessionIds: Collection<String>) {
+        markEventsNotified(studentId, sessionIds)
     }
 }

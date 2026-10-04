@@ -473,16 +473,20 @@ object CloudSyncManager {
             if (status !in 200..299) return@withContext Pair(false, "Sync error ($status)")
 
             val records = JSONArray(response)
-            val sm = sessionManagerRef ?: context?.let { com.vaibhav.facialattendancesystem.util.SessionManager(it) }
+            val ctx = context ?: contextRef
+            val sm = sessionManagerRef ?: ctx?.let { com.vaibhav.facialattendancesystem.util.SessionManager(it) }
             val isFirstNotificationInit = sm != null && !sm.hasInitializedNotifiedSessions(studentId)
-            val alreadyNotifiedIds = sm?.getNotifiedSessionIds(studentId) ?: emptySet()
-            val allSeenSessionIds = mutableSetOf<String>()
+            val alreadyNotifiedEvents = sm?.getNotifiedEvents(studentId) ?: emptySet()
+            val allSeenEvents = mutableSetOf<String>()
 
-            var newCount = 0
-            var latestClassId = ""
-            var latestClassName = ""
-            var latestDateStr = ""
-            var latestIsPresent = false
+            data class PendingNotif(
+                val sessionId: String,
+                val classId: String,
+                val className: String,
+                val isPresent: Boolean,
+                val sessionDate: Long
+            )
+            val pendingNotifs = mutableListOf<PendingNotif>()
             val nowMs = System.currentTimeMillis()
 
             for (i in 0 until records.length()) {
@@ -501,15 +505,21 @@ object CloudSyncManager {
                 }
 
                 val sessionId = sessObj.getString("session_id")
-                allSeenSessionIds.add(sessionId)
+                val isPresent = recObj.optBoolean("marked_present", false)
+                val statusStr = if (isPresent) "PRESENT" else "ABSENT"
+                val eventKey = "${sessionId}_$statusStr"
+                allSeenEvents.add(eventKey)
+                allSeenEvents.add(sessionId)
+
                 // Parse the real session date from cloud with proper UTC timezone handling
                 val rawCreatedAt = sessObj.optString("created_at", "")
                 val rawDate = sessObj.optString("session_date", "")
                 val parsedDate = parseCloudTimestamp(rawCreatedAt, rawDate)
 
-                val isPresent = recObj.optBoolean("marked_present", false)
                 val existingSession = db.attendanceDao().getSessionById(sessionId)
-                val wasMissingInLocalDb = existingSession == null
+                val existingRecord = db.attendanceDao().getRecordsForSession(sessionId).firstOrNull { it.studentId == studentId }
+                val wasMissingInLocalDb = (existingSession == null || existingRecord == null)
+                val wasStatusChanged = (existingRecord != null && existingRecord.markedPresent != (if (isPresent) 1 else 0))
 
                 // Always insert or update the session to ensure sessionDate is accurate
                 db.attendanceDao().insertSession(AttendanceSession(
@@ -523,54 +533,65 @@ object CloudSyncManager {
                     isSynced = true
                 ))
 
-                // Only trigger a notification if:
-                // 1. It wasn't already notified in SharedPreferences
-                // 2. It wasn't the very first baseline sync on this install
-                // 3. It was missing in local DB and occurred within the last 24 hours
-                val isRecentSession = (nowMs - parsedDate) <= 24L * 60L * 60L * 1000L
-                if (wasMissingInLocalDb && !isFirstNotificationInit && !alreadyNotifiedIds.contains(sessionId) && isRecentSession) {
-                    newCount++
-                    latestClassId = classId
-                    latestClassName = className
-                    latestIsPresent = isPresent
-                    latestDateStr = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(parsedDate))
-                }
-
                 db.attendanceDao().insertAttendanceRecords(listOf(AttendanceRecord(
                     sessionId = sessionId, studentId = studentId, markedPresent = if (isPresent) 1 else 0
                 )))
+
+                // Only queue notification if:
+                // 1. Session is recent (within 24 hours)
+                // 2. Not the very first baseline sync after login
+                // 3. This specific event (sessionId_status) hasn't been notified before
+                // 4. Record is newly arrived, attendance status changed, or marked present
+                val isRecentSession = (nowMs - parsedDate) <= 24L * 60L * 60L * 1000L
+                if (!isFirstNotificationInit && isRecentSession) {
+                    val alreadyNotified = alreadyNotifiedEvents.contains(eventKey)
+                    if (!alreadyNotified && (wasMissingInLocalDb || wasStatusChanged || isPresent)) {
+                        pendingNotifs.add(PendingNotif(
+                            sessionId = sessionId,
+                            classId = classId,
+                            className = className,
+                            isPresent = isPresent,
+                            sessionDate = parsedDate
+                        ))
+                    }
+                }
             }
 
-            // Persist all seen session IDs so none of them can ever notify again
-            sm?.markSessionsNotified(studentId, allSeenSessionIds)
+            // Persist all seen session events so none of them can ever notify again
+            sm?.markEventsNotified(studentId, allSeenEvents)
 
-            if (newCount > 0 && notify && context != null && latestClassId.isNotBlank()) {
-                val recordsInClass = db.attendanceDao().getRecordsListForStudentInClass(latestClassId, studentId)
-                val totalLectures = db.attendanceDao().getSessionsListForClass(latestClassId).size
-                val attendedLectures = recordsInClass.count { it.markedPresent == 1 }
-                val pct = if (totalLectures > 0) ((attendedLectures.toFloat() / totalLectures) * 100).toInt() else 100
+            if (notify && ctx != null && pendingNotifs.isNotEmpty()) {
+                for (item in pendingNotifs.take(2)) {
+                    val recordsInClass = db.attendanceDao().getRecordsListForStudentInClass(item.classId, studentId)
+                    val totalLectures = db.attendanceDao().getSessionsListForClass(item.classId).size
+                    val attendedLectures = recordsInClass.count { it.markedPresent == 1 }
+                    val pct = if (totalLectures > 0) ((attendedLectures.toFloat() / totalLectures) * 100).toInt() else 100
+                    val dateFormatted = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(item.sessionDate))
 
-                val title = if (latestIsPresent) {
-                    "✓ Attendance: PRESENT in $latestClassName"
-                } else {
-                    "✕ Attendance: ABSENT in $latestClassName"
+                    val notifTitle = if (item.isPresent) {
+                        "✅ Marked PRESENT in ${item.className}"
+                    } else {
+                        "❌ Marked ABSENT in ${item.className}"
+                    }
+
+                    val notifMessage = if (item.isPresent) {
+                        "You have been marked present in ${item.className}!\nLecture: $dateFormatted · Attendance: $pct% ($attendedLectures/$totalLectures attended)"
+                    } else {
+                        "You were marked absent in ${item.className}.\nLecture: $dateFormatted · Attendance: $pct% ($attendedLectures/$totalLectures attended)"
+                    }
+
+                    val stableNotifId = ("session_${item.sessionId}".hashCode() and 0x7FFFFFFF)
+                    NotificationHelper.showAttendanceNotification(
+                        context = ctx,
+                        title = notifTitle,
+                        message = notifMessage,
+                        classId = item.classId,
+                        className = item.className,
+                        notificationId = stableNotifId
+                    )
                 }
-
-                val message = if (newCount == 1) {
-                    "Lecture on $latestDateStr recorded.\nYour attendance is now $pct% ($attendedLectures/$totalLectures lectures attended)."
-                } else {
-                    "$newCount new lecture attendance records published.\nYour attendance in $latestClassName is now $pct% ($attendedLectures/$totalLectures lectures)."
-                }
-
-                NotificationHelper.showAttendanceNotification(
-                    context = context,
-                    title = title,
-                    message = message,
-                    classId = latestClassId,
-                    className = latestClassName
-                )
             }
-            Pair(true, "Synced $newCount updates.")
+            Pair(true, "Synced ${records.length()} records.")
         } catch (e: Exception) { Pair(false, e.localizedMessage ?: "Sync Error") }
     }
 

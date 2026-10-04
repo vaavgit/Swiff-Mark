@@ -755,32 +755,32 @@ fun AppNavigation(
 
                 var isSyncing by remember { mutableStateOf(false) }
 
-                // Initial sync on screen entry + continuous 15s background auto-sync while dashboard is open
+                // Initial baseline sync on screen entry + continuous 8s background auto-sync while dashboard is open
                 LaunchedEffect(studentId) {
                     if (studentId.isNotBlank()) {
                         isSyncing = true
                         com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                        com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
+                        // Baseline sync: notify = false so we establish baseline without sound/banner for already existing lectures
+                        com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context, notify = false)
                         isSyncing = false
                         while (true) {
-                            kotlinx.coroutines.delay(15_000L)
+                            kotlinx.coroutines.delay(8_000L) // Fast 8s interval for immediate notification delivery
                             if (!isSyncing) {
                                 com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context, notify = true)
                             }
                         }
                     }
                 }
 
-                // Auto-sync every time the screen is RESUMED (e.g. user returns from class detail screen).
-                // This keeps data fresh across devices without the user having to manually pull-to-refresh.
+                // Auto-sync every time the screen is RESUMED (e.g. user returns from class detail screen or background).
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner, studentId) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME && studentId.isNotBlank() && !isSyncing) {
                             scope.launch(Dispatchers.IO) {
                                 com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context, notify = true)
                             }
                         }
                     }
