@@ -376,14 +376,7 @@ object CloudSyncManager {
                 }
                 cloudClassIds.add(classId)
                 val existing = db.clazzDao().getClassById(classId)
-                val createdAt = existing?.createdAt ?: run {
-                    val rawCreatedAt = c.optString("created_at", "")
-                    if (rawCreatedAt.isNotEmpty()) {
-                        try {
-                            java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).parse(rawCreatedAt)?.time ?: System.currentTimeMillis()
-                        } catch (e: Exception) { System.currentTimeMillis() }
-                    } else System.currentTimeMillis()
-                }
+                val createdAt = existing?.createdAt ?: parseCloudTimestamp(c.optString("created_at", ""))
                 db.clazzDao().insertClass(Clazz(
                     classId = classId, teacherId = teacherId, className = c.getString("class_name"),
                     subject = c.optString("subject_code", ""), semester = c.optInt("semester", 1),
@@ -398,11 +391,46 @@ object CloudSyncManager {
         } catch (e: Exception) { Pair(false, e.localizedMessage ?: "Error") }
     }
 
+    fun parseCloudTimestamp(rawTimestamp: String, rawDateFallback: String = ""): Long {
+        if (rawTimestamp.isNotBlank()) {
+            try {
+                return java.time.OffsetDateTime.parse(rawTimestamp).toInstant().toEpochMilli()
+            } catch (_: Exception) {}
+            try {
+                return java.time.Instant.parse(rawTimestamp).toEpochMilli()
+            } catch (_: Exception) {}
+            try {
+                val clean = rawTimestamp.replace(" ", "T").substringBefore("+").substringBefore("Z")
+                val formatStr = if (clean.contains(".")) "yyyy-MM-dd'T'HH:mm:ss.SSSSSS" else "yyyy-MM-dd'T'HH:mm:ss"
+                val sdf = java.text.SimpleDateFormat(formatStr, java.util.Locale.US)
+                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                val d = sdf.parse(clean)
+                if (d != null) return d.time
+            } catch (_: Exception) {}
+            try {
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                val d = sdf.parse(rawTimestamp)
+                if (d != null) return d.time
+            } catch (_: Exception) {}
+        }
+        if (rawDateFallback.isNotBlank()) {
+            try {
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                val d = sdf.parse(rawDateFallback)
+                if (d != null) return d.time
+            } catch (_: Exception) {}
+        }
+        return System.currentTimeMillis()
+    }
+
     suspend fun uploadAttendanceSession(session: AttendanceSession, records: List<AttendanceRecord>, teacherId: String? = null): Boolean = withContext(Dispatchers.IO) {
         try {
             val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(session.sessionDate))
+            val isoCreatedAt = java.time.Instant.ofEpochMilli(session.sessionDate).toString()
             val sessionJson = JSONObject().apply {
                 put("session_id", session.sessionId); put("class_id", session.classId); put("teacher_id", teacherId); put("session_date", dateStr)
+                put("created_at", isoCreatedAt)
                 put("photo1_faces_detected", session.photo1FacesDetected); put("photo2_faces_detected", session.photo2FacesDetected); put("session_status", session.sessionStatus)
             }
             executeRequest("/rest/v1/attendance_sessions?on_conflict=session_id", "POST", sessionJson.toString(),
@@ -474,34 +502,26 @@ object CloudSyncManager {
 
                 val sessionId = sessObj.getString("session_id")
                 allSeenSessionIds.add(sessionId)
-                // Parse the real session date from cloud; prefer created_at for accurate time
+                // Parse the real session date from cloud with proper UTC timezone handling
                 val rawCreatedAt = sessObj.optString("created_at", "")
                 val rawDate = sessObj.optString("session_date", "")
-                val dateToParse = rawCreatedAt.ifBlank { rawDate }
-                val parsedDate: Long = if (dateToParse.isNotEmpty()) {
-                    try {
-                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
-                        sdf.parse(dateToParse)?.time ?: System.currentTimeMillis()
-                    } catch (e1: Exception) {
-                        try {
-                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-                            sdf.parse(dateToParse)?.time ?: System.currentTimeMillis()
-                        } catch (e2: Exception) {
-                            System.currentTimeMillis()
-                        }
-                    }
-                } else System.currentTimeMillis()
+                val parsedDate = parseCloudTimestamp(rawCreatedAt, rawDate)
 
                 val isPresent = recObj.optBoolean("marked_present", false)
-                val wasMissingInLocalDb = db.attendanceDao().getSessionById(sessionId) == null
+                val existingSession = db.attendanceDao().getSessionById(sessionId)
+                val wasMissingInLocalDb = existingSession == null
 
-                if (wasMissingInLocalDb) {
-                    db.attendanceDao().insertSession(AttendanceSession(
-                        sessionId = sessionId, classId = classId,
-                        sessionDate = parsedDate,
-                        photo1Path = "", photo1FacesDetected = 0
-                    ))
-                }
+                // Always insert or update the session to ensure sessionDate is accurate
+                db.attendanceDao().insertSession(AttendanceSession(
+                    sessionId = sessionId, classId = classId,
+                    sessionDate = parsedDate,
+                    photo1Path = existingSession?.photo1Path ?: "",
+                    photo1FacesDetected = existingSession?.photo1FacesDetected ?: 0,
+                    photo2Path = existingSession?.photo2Path ?: "",
+                    photo2FacesDetected = existingSession?.photo2FacesDetected ?: 0,
+                    sessionStatus = existingSession?.sessionStatus ?: "COMPLETED",
+                    isSynced = true
+                ))
 
                 // Only trigger a notification if:
                 // 1. It wasn't already notified in SharedPreferences
@@ -963,22 +983,16 @@ object CloudSyncManager {
                 sessionIds.add(sId)
                 val rawCreatedAt = obj.optString("created_at", "")
                 val rawDate = obj.optString("session_date", "")
-                val dateToParse = rawCreatedAt.ifBlank { rawDate }
-                val parsedDate: Long = if (dateToParse.isNotEmpty()) {
-                    try {
-                        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).parse(dateToParse)?.time ?: System.currentTimeMillis()
-                    } catch (e1: Exception) {
-                        try {
-                            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateToParse)?.time ?: System.currentTimeMillis()
-                        } catch (e2: Exception) { System.currentTimeMillis() }
-                    }
-                } else System.currentTimeMillis()
+                val parsedDate = parseCloudTimestamp(rawCreatedAt, rawDate)
+                val existingSession = db.attendanceDao().getSessionById(sId)
                 db.attendanceDao().insertSession(AttendanceSession(
                     sessionId = sId, classId = classId,
                     sessionDate = parsedDate,
-                    photo1Path = "", photo1FacesDetected = obj.optInt("photo1_faces_detected", 0),
-                    photo2Path = "", photo2FacesDetected = obj.optInt("photo2_faces_detected", 0),
-                    sessionStatus = obj.optString("session_status", "COMPLETED"),
+                    photo1Path = existingSession?.photo1Path ?: "",
+                    photo1FacesDetected = obj.optInt("photo1_faces_detected", existingSession?.photo1FacesDetected ?: 0),
+                    photo2Path = existingSession?.photo2Path ?: "",
+                    photo2FacesDetected = obj.optInt("photo2_faces_detected", existingSession?.photo2FacesDetected ?: 0),
+                    sessionStatus = obj.optString("session_status", existingSession?.sessionStatus ?: "COMPLETED"),
                     isSynced = true
                 ))
             }

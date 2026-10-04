@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vaibhav.facialattendancesystem.data.AttendanceRecord
@@ -164,346 +165,361 @@ fun ClassDetailsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             val borderColor = adaptiveBorderColor()
-
-            Text(
-                text = clazz.className,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Text(
-                text = "Sec ${clazz.section} · Semester ${clazz.semester}",
-                fontSize = 11.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
-            )
-
-            // ── Code Card (Prototype row) ─────────────────────────────
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .border(1.dp, borderColor, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Code: ${clazz.classCode}",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    StatusPill(
-                        text = "⎘ Copy",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.clickable {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Class Code", clazz.classCode)
-                            clipboard.setPrimaryClip(clip)
-                            showBanner("✓ Code copied: ${clazz.classCode}", false)
-                        }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // ── 3-Stat Grid: Students | Sessions | Defaulters ──────────
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(
-                    Triple("${enrolledStudents.size}", "Students", PrimaryCyan) to {},
-                    Triple("$totalSessionsCount", "Sessions", SuccessGreen) to {},
-                    Triple("${defaultersList.size}", "Defaulters (<75%)", if (defaultersList.isNotEmpty()) ErrorRose else MaterialTheme.colorScheme.onSurfaceVariant) to {
-                        if (totalSessionsCount > 0) showDefaultersDialog = true
-                    }
-                ).forEach { (stat, onClickAction) ->
-                    val (value, label, color) = stat
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
-                            .clickable { onClickAction() }
-                            .padding(vertical = 12.dp, horizontal = 4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
-                            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                        }
-                    }
-                }
-            }
-
-            if (totalSessionsCount > 0 && defaultersList.isNotEmpty()) {
-                Button(
-                    onClick = { showDefaultersDialog = true },
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRose.copy(alpha = 0.9f)),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).height(38.dp)
-                ) {
-                    Text("⚠️ View Defaulter List & Notice (${defaultersList.size} < 75%)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
-            }
-
-            // ── Pending Join Requests ──────────────────────────────────
-            if (pendingStudents.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "⏳ Pending Approvals",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = WarningAmber
-                    )
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(WarningAmber.copy(alpha = 0.15f))
-                            .padding(horizontal = 10.dp, vertical = 3.dp)
-                    ) {
-                        Text(
-                            text = "${pendingStudents.size} request${if (pendingStudents.size > 1) "s" else ""}",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = WarningAmber
-                        )
-                    }
-                }
-                pendingStudents.forEach { student ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(WarningAmber.copy(alpha = 0.07f))
-                            .border(1.dp, WarningAmber.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                            .padding(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Smart avatar for pending student
-                            val avatarVer = ProfileImageHelper.avatarVersion
-                            val pendingAvatarBitmap = remember(student.studentId, avatarVer) {
-                                mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
-                            }
-                            LaunchedEffect(student.studentId) {
-                                if (pendingAvatarBitmap.value == null) {
-                                    val downloaded = CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
-                                    if (downloaded) {
-                                        pendingAvatarBitmap.value = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
-                                    }
-                                }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(WarningAmber.copy(alpha = 0.15f))
-                                    .border(1.2.dp, WarningAmber.copy(alpha = 0.5f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                val bmp = pendingAvatarBitmap.value
-                                if (bmp != null) {
-                                    Image(
-                                        bitmap = bmp.asImageBitmap(),
-                                        contentDescription = "Profile photo of ${student.fullName}",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                    )
-                                } else {
-                                    Text(
-                                        text = ProfileImageHelper.getInitials(student.fullName, "S"),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = WarningAmber
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = student.fullName,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Roll ${student.rollNumber} · ${student.email}",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = "✓ Approve",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = SuccessGreen,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(SuccessGreen.copy(alpha = 0.12f))
-                                        .clickable { onApproveStudent(student.studentId) }
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                                Text(
-                                    text = "✕ Reject",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = ErrorRose,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(ErrorRose.copy(alpha = 0.12f))
-                                        .clickable { onRejectStudent(student.studentId) }
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                HorizontalDivider(
-                    modifier = Modifier.padding(bottom = 10.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                )
-            }
-
-            // ── Roster Header, Search & Filter ──────────────────────────
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Enrolled Students (${filteredStudents.size}${if (filteredStudents.size != enrolledStudents.size) "/${enrolledStudents.size}" else ""})",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                if (defaultersList.isNotEmpty() && totalSessionsCount > 0) {
-                    Text(
-                        text = "⚠️ Defaulters: ${defaultersList.size}",
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ErrorRose,
-                        modifier = Modifier.clickable { showDefaultersDialog = true }
-                    )
-                }
-            }
-
-            // Search Bar
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search by name, roll no, email...", fontSize = 12.5.sp) },
-                leadingIcon = { Text("🔍", fontSize = 13.sp) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Text("✕", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = PrimaryCyan,
-                    unfocusedBorderColor = borderColor,
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                )
-            )
-
-            // Quick Filter Chips
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilterChip(
-                    selected = selectedFilterMode == 0,
-                    onClick = { selectedFilterMode = 0 },
-                    label = { Text("All (${enrolledStudents.size})", fontSize = 11.5.sp) }
-                )
-                FilterChip(
-                    selected = selectedFilterMode == 1,
-                    onClick = { selectedFilterMode = 1 },
-                    label = {
-                        Text(
-                            "⚠️ Low Attendance (< 75%) (${defaultersList.size})",
-                            fontSize = 11.5.sp,
-                            color = if (selectedFilterMode == 1 || defaultersList.isNotEmpty()) ErrorRose else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                )
-            }
 
             PullToRefreshBox(
                 isRefreshing = isSyncing,
                 onRefresh = onRefresh,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxSize()
             ) {
-                if (enrolledStudents.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "No students enrolled yet.\nShare code '${clazz.classCode}' with your students!\n(Pull down to refresh)",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 22.sp
-                        )
-                    }
-                } else if (filteredStudents.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    item {
+                        Column {
                             Text(
-                                text = "No students match your search or filter.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.5.sp
+                                text = clazz.className,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
                             )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    searchQuery = ""
-                                    selectedFilterMode = 0
-                                },
-                                shape = RoundedCornerShape(8.dp)
+                            Text(
+                                text = "Sec ${clazz.section} · Semester ${clazz.semester}",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                            )
+                        }
+                    }
+
+                    // ── Code Card ─────────────────────────────────────────────
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .border(1.dp, borderColor, RoundedCornerShape(14.dp))
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Clear Search & Filter", fontSize = 12.sp)
+                                Text(
+                                    text = "Code: ${clazz.classCode}",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                StatusPill(
+                                    text = "⎘ Copy",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.clickable {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clip = ClipData.newPlainText("Class Code", clazz.classCode)
+                                        clipboard.setPrimaryClip(clip)
+                                        showBanner("✓ Code copied: ${clazz.classCode}", false)
+                                    }
+                                )
                             }
                         }
                     }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(filteredStudents) { student ->
+
+                    // ── 3-Stat Grid: Students | Sessions | Defaulters ──────────
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                Triple("${enrolledStudents.size}", "Students", PrimaryCyan) to {},
+                                Triple("$totalSessionsCount", "Sessions", SuccessGreen) to {},
+                                Triple("${defaultersList.size}", "Defaulters (<75%)", if (defaultersList.isNotEmpty()) ErrorRose else MaterialTheme.colorScheme.onSurfaceVariant) to {
+                                    if (totalSessionsCount > 0) showDefaultersDialog = true
+                                }
+                            ).forEach { (stat, onClickAction) ->
+                                val (value, label, color) = stat
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                                        .clickable { onClickAction() }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = color)
+                                        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (totalSessionsCount > 0 && defaultersList.isNotEmpty()) {
+                        item {
+                            Button(
+                                onClick = { showDefaultersDialog = true },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = ErrorRose.copy(alpha = 0.9f)),
+                                modifier = Modifier.fillMaxWidth().height(38.dp)
+                            ) {
+                                Text("⚠️ View Defaulter List & Notice (${defaultersList.size} < 75%)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+                    }
+
+                    // ── Pending Join Requests ──────────────────────────────────
+                    if (pendingStudents.isNotEmpty()) {
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "⏳ Pending Approvals",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = WarningAmber
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(WarningAmber.copy(alpha = 0.15f))
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "${pendingStudents.size} request${if (pendingStudents.size > 1) "s" else ""}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = WarningAmber
+                                    )
+                                }
+                            }
+                        }
+                        items(pendingStudents, key = { "pending_${it.studentId}" }) { student ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(WarningAmber.copy(alpha = 0.07f))
+                                    .border(1.dp, WarningAmber.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val avatarVer = ProfileImageHelper.avatarVersion
+                                    val pendingAvatarBitmap = remember(student.studentId, avatarVer) {
+                                        mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
+                                    }
+                                    LaunchedEffect(student.studentId) {
+                                        if (pendingAvatarBitmap.value == null) {
+                                            val downloaded = CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
+                                            if (downloaded) {
+                                                pendingAvatarBitmap.value = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+                                            }
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(WarningAmber.copy(alpha = 0.15f))
+                                            .border(1.2.dp, WarningAmber.copy(alpha = 0.5f), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        val bmp = pendingAvatarBitmap.value
+                                        if (bmp != null) {
+                                            Image(
+                                                bitmap = bmp.asImageBitmap(),
+                                                contentDescription = "Profile photo of ${student.fullName}",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                            )
+                                        } else {
+                                            Text(
+                                                text = ProfileImageHelper.getInitials(student.fullName, "S"),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = WarningAmber
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = student.fullName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Roll ${student.rollNumber} · ${student.email}",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            text = "✓ Approve",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SuccessGreen,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(SuccessGreen.copy(alpha = 0.12f))
+                                                .clickable { onApproveStudent(student.studentId) }
+                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                        Text(
+                                            text = "✕ Reject",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = ErrorRose,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(ErrorRose.copy(alpha = 0.12f))
+                                                .clickable { onRejectStudent(student.studentId) }
+                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Roster Header, Search & Filter ──────────────────────────
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Enrolled Students (${filteredStudents.size}${if (filteredStudents.size != enrolledStudents.size) "/${enrolledStudents.size}" else ""})",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                if (defaultersList.isNotEmpty() && totalSessionsCount > 0) {
+                                    Text(
+                                        text = "⚠️ Defaulters: ${defaultersList.size}",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ErrorRose,
+                                        modifier = Modifier.clickable { showDefaultersDialog = true }
+                                    )
+                                }
+                            }
+
+                            // Search Bar
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = { Text("Search by name, roll no, email...", fontSize = 12.5.sp) },
+                                leadingIcon = { Text("🔍", fontSize = 13.sp) },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Text("✕", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = PrimaryCyan,
+                                    unfocusedBorderColor = borderColor,
+                                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                                )
+                            )
+
+                            // Quick Filter Chips
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilterChip(
+                                    selected = selectedFilterMode == 0,
+                                    onClick = { selectedFilterMode = 0 },
+                                    label = { Text("All (${enrolledStudents.size})", fontSize = 11.5.sp) }
+                                )
+                                FilterChip(
+                                    selected = selectedFilterMode == 1,
+                                    onClick = { selectedFilterMode = 1 },
+                                    label = {
+                                        Text(
+                                            "⚠️ Low Attendance (< 75%) (${defaultersList.size})",
+                                            fontSize = 11.5.sp,
+                                            color = if (selectedFilterMode == 1 || defaultersList.isNotEmpty()) ErrorRose else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (enrolledStudents.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No students enrolled yet.\nShare code '${clazz.classCode}' with your students!\n(Pull down to refresh)",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 14.sp,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 22.sp
+                                )
+                            }
+                        }
+                    } else if (filteredStudents.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "No students match your search or filter.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 13.5.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            searchQuery = ""
+                                            selectedFilterMode = 0
+                                        },
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("Clear Search & Filter", fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        items(filteredStudents, key = { it.studentId }) { student ->
                             val isEnrolled = student.enrollmentStatus == 1
                             val attendedCount = attendanceRecords.count { it.studentId == student.studentId && it.markedPresent == 1 }
                             val pctInt = if (totalSessionsCount > 0) ((attendedCount.toFloat() / totalSessionsCount) * 100).toInt() else 0
@@ -529,29 +545,26 @@ fun ClassDetailsScreen(
                                         )
                                     )
                                     .border(1.dp, borderColor, RoundedCornerShape(14.dp))
-                                    .padding(16.dp)
+                                    .padding(14.dp)
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    // Row 1: Student Identity & Attendance Tag
+                                    // Row 1: Student Identity & Attendance Pill
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.Top
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                            modifier = Modifier.weight(1f)
+                                            modifier = Modifier.weight(1f, fill = false)
                                         ) {
-                                            // Smart avatar: show profile photo if available, fallback to First+Last initials (VV)
                                             val avatarVerRoster = ProfileImageHelper.avatarVersion
                                             val studentAvatarBitmap = remember(student.studentId, avatarVerRoster) {
                                                 mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
                                             }
-                                            val scope = rememberCoroutineScope()
                                             LaunchedEffect(student.studentId) {
                                                 if (studentAvatarBitmap.value == null) {
-                                                    // Try to download from cloud
                                                     val downloaded = CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
                                                     if (downloaded) {
                                                         studentAvatarBitmap.value = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
@@ -560,10 +573,10 @@ fun ClassDetailsScreen(
                                             }
                                             Box(
                                                 modifier = Modifier
-                                                    .size(44.dp)
+                                                    .size(42.dp)
                                                     .clip(CircleShape)
                                                     .background(PrimaryCyan.copy(alpha = 0.15f))
-                                                    .border(1.5.dp, PrimaryCyan.copy(alpha = 0.4f), CircleShape),
+                                                    .border(1.2.dp, PrimaryCyan.copy(alpha = 0.4f), CircleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 val bmp = studentAvatarBitmap.value
@@ -577,7 +590,7 @@ fun ClassDetailsScreen(
                                                 } else {
                                                     Text(
                                                         text = ProfileImageHelper.getInitials(student.fullName, "S"),
-                                                        fontSize = 14.sp,
+                                                        fontSize = 13.sp,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = PrimaryCyan
                                                     )
@@ -587,8 +600,10 @@ fun ClassDetailsScreen(
                                                 Text(
                                                     text = student.fullName,
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 16.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface
+                                                    fontSize = 15.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
                                                     text = "Roll ${student.rollNumber} · Sec ${student.classSection ?: "A"}",
@@ -596,35 +611,59 @@ fun ClassDetailsScreen(
                                                     fontWeight = FontWeight.Medium,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
-                                                if (student.email.isNotBlank()) {
-                                                    Text(
-                                                        text = "✉ ${student.email}",
-                                                        fontSize = 11.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                                        modifier = Modifier.padding(top = 2.dp)
-                                                    )
-                                                }
                                             }
                                         }
 
+                                        // Attendance Tag
                                         Column(horizontalAlignment = Alignment.End) {
-                                            StatusPill(
-                                                text = if (totalSessionsCount > 0) "$pctInt% Attendance" else "No Lectures",
-                                                color = attendancePillColor
-                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(attendancePillColor.copy(alpha = 0.12f))
+                                                    .border(1.dp, attendancePillColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (totalSessionsCount > 0) "$pctInt% Attendance" else "No Lectures",
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = attendancePillColor
+                                                )
+                                            }
                                             if (totalSessionsCount > 0) {
                                                 Text(
-                                                    text = "$attendedCount/$totalSessionsCount",
+                                                    text = "$attendedCount/$totalSessionsCount attended",
                                                     fontSize = 10.sp,
                                                     color = attendancePillColor,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = androidx.compose.ui.Modifier.padding(top = 2.dp)
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    modifier = Modifier.padding(top = 2.dp)
                                                 )
                                             }
                                         }
                                     }
 
-                                    // Row 2: Attendance Progress Bar & Count
+                                    // Row 2: Email (clean, isolated row to avoid any text squeeze)
+                                    if (student.email.isNotBlank()) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Text(
+                                                text = "✉",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = student.email,
+                                                fontSize = 11.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+
+                                    // Row 3: Progress Bar & Count
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -632,14 +671,14 @@ fun ClassDetailsScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = if (totalSessionsCount > 0) "$attendedCount/$totalSessionsCount classes" else "0 classes conducted so far",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
+                                                text = if (totalSessionsCount > 0) "$attendedCount of $totalSessionsCount classes" else "0 classes conducted so far",
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Medium,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Text(
                                                 text = if (totalSessionsCount > 0) "$pctInt%" else "—",
-                                                fontSize = 12.sp,
+                                                fontSize = 11.5.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = attendancePillColor
                                             )
@@ -648,14 +687,14 @@ fun ClassDetailsScreen(
                                             progress = { progressFloat },
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(6.dp)
+                                                .height(5.dp)
                                                 .clip(RoundedCornerShape(3.dp)),
                                             color = attendancePillColor,
                                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                                         )
                                     }
 
-                                    // Row 3: Biometrics Status & Teacher Actions
+                                    // Row 4: Biometrics Status & Teacher Actions (Guaranteed single line, never wraps vertically)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -667,15 +706,16 @@ fun ClassDetailsScreen(
                                         ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(8.dp)
+                                                    .size(7.dp)
                                                     .clip(CircleShape)
                                                     .background(if (isEnrolled) SuccessGreen else WarningAmber)
                                             )
                                             Text(
-                                                text = if (isEnrolled) "Face Biometrics Active" else "Face Enrollment Pending",
-                                                fontSize = 12.sp,
+                                                text = if (isEnrolled) "Face Biometrics Active" else "Enrollment Pending",
+                                                fontSize = 11.sp,
                                                 fontWeight = FontWeight.SemiBold,
-                                                color = if (isEnrolled) SuccessGreen else WarningAmber
+                                                color = if (isEnrolled) SuccessGreen else WarningAmber,
+                                                maxLines = 1
                                             )
                                         }
 
@@ -683,34 +723,48 @@ fun ClassDetailsScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Text(
-                                                text = "Reset Password 🔑",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = PrimaryCyan,
+                                            Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(6.dp))
                                                     .background(PrimaryCyan.copy(alpha = 0.1f))
                                                     .clickable { studentToResetPassword = student }
                                                     .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            )
+                                            ) {
+                                                Text(
+                                                    text = "Reset 🔑",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = PrimaryCyan,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
 
-                                            Text(
-                                                text = "Remove ✕",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = ErrorRose,
+                                            Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(6.dp))
                                                     .background(ErrorRose.copy(alpha = 0.12f))
                                                     .clickable { studentToRemove = student }
                                                     .padding(horizontal = 8.dp, vertical = 4.dp)
-                                            )
+                                            ) {
+                                                Text(
+                                                    text = "Remove ✕",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = ErrorRose,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
             }
