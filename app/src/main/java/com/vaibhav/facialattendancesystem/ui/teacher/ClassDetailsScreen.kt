@@ -309,90 +309,124 @@ fun ClassDetailsScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .background(WarningAmber.copy(alpha = 0.07f))
-                                    .border(1.dp, WarningAmber.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                                    .padding(12.dp)
+                                    .border(1.dp, WarningAmber.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                                    .padding(14.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val avatarVer = ProfileImageHelper.avatarVersion
-                                    val pendingAvatarBitmap = remember(student.studentId, avatarVer) {
-                                        mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
-                                    }
-                                    LaunchedEffect(student.studentId) {
-                                        if (pendingAvatarBitmap.value == null) {
-                                            val downloaded = CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
-                                            if (downloaded) {
-                                                pendingAvatarBitmap.value = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    // Row 1: Student Avatar & Name + Roll
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val avatarVer = ProfileImageHelper.avatarVersion
+                                        val pendingAvatarBitmap = remember(student.studentId, avatarVer) {
+                                            mutableStateOf<Bitmap?>(ProfileImageHelper.loadProfileBitmap(context, student.studentId))
+                                        }
+                                        LaunchedEffect(student.studentId) {
+                                            if (pendingAvatarBitmap.value == null) {
+                                                val downloaded = CloudSyncManager.downloadAndCacheProfileAvatar(context, student.studentId)
+                                                if (downloaded) {
+                                                    pendingAvatarBitmap.value = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+                                                }
                                             }
                                         }
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(WarningAmber.copy(alpha = 0.15f))
-                                            .border(1.2.dp, WarningAmber.copy(alpha = 0.5f), CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        val bmp = pendingAvatarBitmap.value
-                                        if (bmp != null) {
-                                            Image(
-                                                bitmap = bmp.asImageBitmap(),
-                                                contentDescription = "Profile photo of ${student.fullName}",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize().clip(CircleShape)
-                                            )
-                                        } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(42.dp)
+                                                .clip(CircleShape)
+                                                .background(WarningAmber.copy(alpha = 0.15f))
+                                                .border(1.2.dp, WarningAmber.copy(alpha = 0.5f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            val bmp = pendingAvatarBitmap.value
+                                            if (bmp != null) {
+                                                Image(
+                                                    bitmap = bmp.asImageBitmap(),
+                                                    contentDescription = "Profile photo of ${student.fullName}",
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = ProfileImageHelper.getInitials(student.fullName, "S"),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = WarningAmber
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = ProfileImageHelper.getInitials(student.fullName, "S"),
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.ExtraBold,
+                                                text = student.fullName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "Roll ${student.rollNumber}${if (!student.classSection.isNullOrBlank()) " · Sec ${student.classSection}" else ""}",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(WarningAmber.copy(alpha = 0.15f))
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        ) {
+                                            Text(
+                                                text = "Pending",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
                                                 color = WarningAmber
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
+
+                                    // Row 2: Email & Action Buttons
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            text = student.fullName,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                            text = student.email,
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f).padding(end = 8.dp)
                                         )
-                                        Text(
-                                            text = "Roll ${student.rollNumber} · ${student.email}",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text(
-                                            text = "✓ Approve",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = SuccessGreen,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(SuccessGreen.copy(alpha = 0.12f))
-                                                .clickable { onApproveStudent(student.studentId) }
-                                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                                        )
-                                        Text(
-                                            text = "✕ Reject",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = ErrorRose,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(ErrorRose.copy(alpha = 0.12f))
-                                                .clickable { onRejectStudent(student.studentId) }
-                                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(
+                                                text = "✕ Reject",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = ErrorRose,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(ErrorRose.copy(alpha = 0.12f))
+                                                    .clickable { onRejectStudent(student.studentId) }
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                            )
+                                            Text(
+                                                text = "✓ Approve",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = SuccessGreen,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(SuccessGreen.copy(alpha = 0.15f))
+                                                    .clickable { onApproveStudent(student.studentId) }
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
