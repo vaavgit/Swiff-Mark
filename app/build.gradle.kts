@@ -23,8 +23,8 @@ android {
         applicationId = "com.vaibhav.facialattendancesystem"
         minSdk = 26
         targetSdk = 37
-        versionCode = 6
-        versionName = "1.1.4"
+        versionCode = 7
+        versionName = "1.2.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -38,11 +38,21 @@ android {
         buildConfigField("String", "DIAGNOSTIC_SYNC_PATH", "\"${localProperties.getProperty("DIAGNOSTIC_SYNC_PATH") ?: ""}\"")
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(localProperties.getProperty("KEYSTORE_FILE") ?: "../swiffmark-release.jks")
+            storePassword = localProperties.getProperty("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = localProperties.getProperty("KEY_ALIAS") ?: ""
+            keyPassword = localProperties.getProperty("KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

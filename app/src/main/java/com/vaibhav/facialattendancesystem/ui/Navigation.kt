@@ -73,6 +73,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.net.Uri
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+
 
 private fun encodeRouteParam(param: String): String {
     return try {
@@ -681,7 +688,66 @@ fun AppNavigation(
                 val studentId = backStack.arguments?.getString("studentId") ?: ""
                 val studentName = decodeRouteParam(backStack.arguments?.getString("studentName") ?: "Student")
 
-                StudentEnrollmentScreen(
+                val context = LocalContext.current
+                val prefs = remember { context.getSharedPreferences("swiffmark_consent", android.content.Context.MODE_PRIVATE) }
+                val consentKey = "biometric_consent_$studentId"
+                var consentGiven by remember { mutableStateOf(prefs.getBoolean(consentKey, false)) }
+                var showConsentDialog by remember { mutableStateOf(!consentGiven) }
+
+                if (showConsentDialog) {
+                    AlertDialog(
+                        onDismissRequest = { /* Non-dismissable */ },
+                        title = {
+                            Text(
+                                text = "📷 Biometric Data Consent",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        text = {
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Swiff Mark will capture your face to create a unique mathematical face profile for attendance marking.",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "• Your face photo is NOT stored — only an encrypted mathematical embedding is saved.\n" +
+                                           "• This data is used exclusively for attendance identification.\n" +
+                                           "• You can delete your face profile at any time from Profile settings.\n" +
+                                           "• Your data is protected under India's DPDP Act 2023 and our Privacy Policy.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    prefs.edit().putBoolean(consentKey, true).apply()
+                                    consentGiven = true
+                                    showConsentDialog = false
+                                }
+                            ) {
+                                Text("I Agree & Continue")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = {
+                                    navController.popBackStack()
+                                }
+                            ) {
+                                Text("Decline", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    )
+                }
+
+                if (consentGiven) {
+                    StudentEnrollmentScreen(
                     studentId = studentId,
                     studentName = studentName,
                     onEnrollmentComplete = { capturedSteps, averagedVector ->
@@ -737,7 +803,9 @@ fun AppNavigation(
                         }
                     }
                 )
+                } // end if (consentGiven)
             }
+
 
             composable(Screen.StudentDashboard.route) { backStack ->
                 val studentId = backStack.arguments?.getString("studentId") ?: ""
