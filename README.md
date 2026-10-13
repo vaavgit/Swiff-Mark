@@ -2,12 +2,13 @@
 
 > Smarter classroom attendance using face recognition. No roll call shouting, no paper sheets, no proxy attendance.
 
-[![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.1.3-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
+[![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.2.0-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
 
 [![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9+-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Privacy Policy](https://img.shields.io/badge/Privacy-Policy-blue?style=flat)](./docs/privacy-policy.md)
 
 In almost every college lecture, 10 to 15 minutes get wasted just calling out roll numbers or passing around an attendance sheet that inevitably gets filled with fake signatures for absent friends.
 
@@ -34,13 +35,17 @@ Everything runs locally on the teacher's phone in a few seconds, so it doesn't g
 - **Fast Roll Call:** Snap two photos, and the app matches everyone in seconds.
 - **Class Join Codes:** Create a class, share a short join code (like `CS-4921`), and only enrolled students can join.
 - **Manual Review:** See green/red bounding boxes over detected student faces with an easy toggle to fix edge cases or overrides.
+- **Attendance History Deep-Dive:** Tap any session to see a full breakdown of who was present, absent, or late. Correct any mistakes instantly.
+- **Fast Search & Filters:** Filter your class roster by name, status, or attendance percentage. One-tap defaulter (< 75%) filter.
 - **College Register CSV Export:** Need to submit monthly reports to the department or HOD? One tap generates an official attendance matrix register with:
   - Day-by-day attendance (`P` / `A`) for every student.
   - Automatic defaulter calculation (shows students below 75% and exactly how many classes they need to attend to become eligible).
   - Ready-to-print header and signature rows for the Dean / HOD.
+- **1-Tap Defaulter Notice:** Auto-generates a warning notice for students below 75% attendance and exports it as a shareable CSV.
 
 ### 🎓 For Students
-- **Instant Attendance Alerts:** The moment your professor finishes marking the session, you get a clean push notification showing if you were marked Present or Absent, plus your updated attendance percentage.
+- **Instant Attendance Alerts:** The moment your professor finishes marking the session, you get a clean push notification (✅ green tick) showing if you were marked Present or Absent, plus your updated attendance percentage — typically within 2–8 seconds.
+- **No Duplicate Alerts:** Anti-spam deduplication ensures you only get notified once per session, never again for the same class.
 - **Personal Dashboard:** Track your attendance across all your subjects, see your overall percentage, and know when you're getting dangerously close to the 75% shortage limit.
 - **Mutual Profile Photos:** Clean profile customization so teachers recognize who's who in their roster.
 
@@ -78,9 +83,14 @@ Under the hood, all recognition happens directly on the device using Google ML K
 ## 🔒 Privacy & Biometrics
 
 We take student biometric privacy seriously:
+- **Explicit consent required:** Students must agree to our biometric consent dialog before any face data is captured.
 - **No face photos are stored in the cloud.** When a student registers their face, the app converts their face into a 512-number mathematical vector directly on the phone.
 - Only the non-reversible numbers are saved to the Supabase database. You cannot reconstruct a person's photo from these numbers.
 - Attendance photos taken by the teacher are processed on-device and discarded.
+- Students can delete their face profile at any time from Profile settings.
+- Compliant with **India's DPDP Act 2023** and **GDPR** principles.
+
+📄 **[Read our full Privacy Policy](./docs/privacy-policy.md)**
 
 ---
 
@@ -91,7 +101,7 @@ We take student biometric privacy seriously:
 - **Machine Learning:** Google ML Kit (Face Detection) + TensorFlow Lite (AdaFace 512-D embeddings)
 - **Computer Vision:** OpenCV for affine landmark alignment
 - **Cloud Backend:** Supabase (PostgreSQL, Row Level Security, Auth)
-- **Build / Packaging:** Gradle Kotlin DSL, R8 / ProGuard obfuscation, Git LFS
+- **Build / Packaging:** Gradle Kotlin DSL, R8 / ProGuard obfuscation, signed release APK, Git LFS
 
 ---
 
@@ -112,11 +122,7 @@ cd Swiff-Mark
 ```
 
 ### 3. Add your keys
-Copy the sample properties file:
-```bash
-cp local.properties.example local.properties
-```
-Open `local.properties` and add your Android SDK path and Supabase keys:
+Open `local.properties` and fill in your SDK path and Supabase keys:
 ```properties
 sdk.dir=C\:\\Users\\<YourName>\\AppData\\Local\\Android\\Sdk
 SUPABASE_URL=https://<your-project-id>.supabase.co
@@ -130,6 +136,32 @@ SUPABASE_ANON_KEY=your_supabase_anon_key
 
 ### 5. Build & Run
 Hit **Run** (`Shift + F10`) in Android Studio.
+
+---
+
+## 📋 Changelog
+
+### v1.2.0 (Latest)
+- ✅ Instant push notifications when attendance is marked (2–8 second delivery)
+- ✅ Anti-spam deduplication — one notification per session, never repeats
+- ✅ Biometric consent dialog before face enrollment (DPDP Act 2023 compliance)
+- ✅ Privacy Policy added (`docs/privacy-policy.md`)
+- ✅ Hardened ProGuard/R8 rules — no more R8 stripping data models
+- ✅ Signed release APK with official keystore
+
+### v1.1.4
+- Attendance history deep-dive & manual session corrections
+- Fast search & filters in class rosters
+- 1-tap defaulter (< 75%) notice & CSV export
+
+### v1.1.3
+- Comprehensive UI polish, zero overlaps, gesture nav padding & theme contrast
+
+### v1.1.2
+- Slim arm64-v8a APK (-90 MB) & local Wi-Fi 2-second update server support
+
+### v1.1.1 / v1.1.0 / v1.0.0
+- Initial public releases
 
 ---
 
