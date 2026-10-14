@@ -45,6 +45,7 @@ fun StudentProfileScreen(
     onThemeToggle: (Boolean) -> Unit,
     onUpdateProfile: (name: String, rollNo: Int, section: String) -> Unit,
     onReEnrollFace: () -> Unit,
+    onDeleteFaceProfile: () -> Unit = {},
     onLogout: () -> Unit = {},
     onBack: () -> Unit
 ) {
@@ -266,6 +267,7 @@ fun StudentProfileScreen(
 
         // ── Settings card ─────────────────────────────────────────
         var showLogoutDialog by remember { mutableStateOf(false) }
+        var showDeleteFaceDialog by remember { mutableStateOf(false) }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -315,6 +317,16 @@ fun StudentProfileScreen(
                 ) {
                     Text("RE-ENROLL 6-ANGLE FACE PROFILE", fontWeight = FontWeight.Bold, color = Color.White)
                 }
+
+                // Delete face profile (GDPR / DPDP right to erasure)
+                OutlinedButton(
+                    onClick = { showDeleteFaceDialog = true },
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, ErrorRose.copy(alpha = 0.7f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("DELETE FACE PROFILE", fontWeight = FontWeight.Bold, color = ErrorRose, fontSize = 13.sp)
+                }
             }
         }
 
@@ -352,6 +364,41 @@ fun StudentProfileScreen(
                 },
                 dismissButton = {
                     OutlinedButton(onClick = { showLogoutDialog = false }, shape = RoundedCornerShape(10.dp)) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            )
+        }
+
+        // Delete face profile confirm dialog
+        if (showDeleteFaceDialog) {
+            AlertDialog(
+                onDismissRequest = { showDeleteFaceDialog = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(16.dp),
+                title = {
+                    Text(
+                        "Delete Face Profile?",
+                        fontWeight = FontWeight.Bold,
+                        color = ErrorRose
+                    )
+                },
+                text = {
+                    Text(
+                        "This will permanently erase all your face enrollment data from this device and the cloud.\n\nYou will need to re-enroll to be marked present in future attendance sessions.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showDeleteFaceDialog = false; onDeleteFaceProfile() },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ErrorRose)
+                    ) { Text("Delete", color = Color.White, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showDeleteFaceDialog = false }, shape = RoundedCornerShape(10.dp)) {
                         Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

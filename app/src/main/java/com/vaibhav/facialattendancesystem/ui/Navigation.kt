@@ -964,6 +964,25 @@ fun AppNavigation(
                         onReEnrollFace = {
                             navController.navigate(Screen.StudentEnrollment.createRoute(currentStudent.studentId, currentStudent.fullName))
                         },
+                        onDeleteFaceProfile = {
+                            scope.launch(Dispatchers.IO) {
+                                // 1. Delete locally from Room
+                                db.faceEmbeddingDao().deleteEmbeddingsForStudent(currentStudent.studentId)
+                                // 2. Reset enrollmentStatus to 0 in local DB
+                                db.studentDao().insertStudent(currentStudent.copy(enrollmentStatus = 0))
+                                // 3. Delete from Supabase
+                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.deleteStudentFaceEmbeddings(
+                                    currentStudent.studentId
+                                )
+                                withContext(Dispatchers.Main) {
+                                    showBanner("✓ Face profile deleted.", false)
+                                    // Navigate to enrollment so the student can re-enroll immediately
+                                    navController.navigate(
+                                        Screen.StudentEnrollment.createRoute(currentStudent.studentId, currentStudent.fullName)
+                                    )
+                                }
+                            }
+                        },
                         onLogout = {
                             sessionManager.clearSession()
                             com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(null)

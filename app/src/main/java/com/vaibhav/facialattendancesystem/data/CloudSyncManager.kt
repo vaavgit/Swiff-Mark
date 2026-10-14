@@ -920,6 +920,21 @@ object CloudSyncManager {
         }
     }
 
+    /**
+     * Deletes all face embedding records for [studentId] from Supabase.
+     * Called when a student exercises their right to erasure (GDPR / DPDP Act).
+     * Local Room deletion is handled by the caller before invoking this.
+     */
+    suspend fun deleteStudentFaceEmbeddings(studentId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val (code, _) = executeRequest(
+                "/rest/v1/face_embeddings?student_id=eq.$studentId",
+                "DELETE"
+            )
+            code in 200..299
+        } catch (e: Exception) { false }
+    }
+
     suspend fun uploadStudentProfile(student: Student, embeddings: List<FloatArray>, password: String? = null): Boolean = withContext(Dispatchers.IO) {
         try {
             ensureCloudUserProfile(student.studentId, student.email, student.fullName, "STUDENT", student.rollNumber.toString(), student.classSection ?: "")
