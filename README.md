@@ -2,7 +2,7 @@
 
 > Smarter classroom attendance using face recognition. No roll call shouting, no paper sheets, no proxy attendance.
 
-[![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.2.0-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
+[![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.2.2-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
 
 [![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9+-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
@@ -141,7 +141,16 @@ Hit **Run** (`Shift + F10`) in Android Studio.
 
 ## 📋 Changelog
 
-### v1.2.0 (Latest)
+### v1.2.2 (Latest)
+- ✅ Enhanced multi-face capture with full-sensor 4:3 high-resolution imaging
+- ✅ Real-time frame sharpness selection (best-of-3 burst with Laplacian blur gate)
+- ✅ OpenCV CLAHE luminance normalisation and edge enhancement on face chips
+- ✅ Adaptive size-aware confidence scoring for distant classroom seating
+- ✅ Quality-weighted embedding fusion across enrollment angles
+- ✅ Screen orientation portrait lock & state retention during sessions
+- ✅ In-app "Delete Face Profile" button in Student Profile (DPDP Act right to erasure)
+
+### v1.2.0
 - ✅ Instant push notifications when attendance is marked (2–8 second delivery)
 - ✅ Anti-spam deduplication — one notification per session, never repeats
 - ✅ Biometric consent dialog before face enrollment (DPDP Act 2023 compliance)
