@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import com.vaibhav.facialattendancesystem.ui.AppNavigation
 import com.vaibhav.facialattendancesystem.ui.theme.FacialAttendanceSystemTheme
 import com.vaibhav.facialattendancesystem.util.NotificationHelper
+import com.vaibhav.facialattendancesystem.ml.FacePreprocessor
 
 class MainActivity : ComponentActivity() {
 
@@ -33,6 +34,9 @@ class MainActivity : ComponentActivity() {
 
         // Initialize notification channel
         NotificationHelper.initChannel(this)
+
+        // Upgrade 2: Initialise OpenCV for CLAHE + Unsharp Mask preprocessing
+        FacePreprocessor.tryInit()
 
         val neededPermissions = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {

@@ -37,7 +37,8 @@ object FaceAligner {
     const val OUTPUT_SIZE = 112
 
     /**
-     * Returns a 112x112 face chip aligned to the AdaFace training grid.
+     * Returns a 112x112 face chip aligned to the AdaFace training grid,
+     * then enhanced via CLAHE + Unsharp Mask (Upgrade 2).
      *
      * @param sourceBitmap  The full-resolution capture bitmap (e.g. 4000x3000 from ImageCapture).
      * @param face          ML Kit DetectedFace carrying landmark positions in source-bitmap coords.
@@ -47,11 +48,11 @@ object FaceAligner {
         val rightEye = face.landmarks[FaceLandmark.RIGHT_EYE]
 
         if (leftEye == null || rightEye == null) {
-            // Landmarks unavailable -- fall back to padded bounding-box crop
-            return fallbackCrop(sourceBitmap, face)
+            // Landmarks unavailable -- fall back to padded bounding-box crop, then enhance
+            return FacePreprocessor.enhance(fallbackCrop(sourceBitmap, face))
         }
 
-        return try {
+        val aligned = try {
             val srcPts = floatArrayOf(
                 leftEye.x,  leftEye.y,
                 rightEye.x, rightEye.y
@@ -71,6 +72,9 @@ object FaceAligner {
             e.printStackTrace()
             fallbackCrop(sourceBitmap, face)
         }
+
+        // Upgrade 2: apply CLAHE + Unsharp Mask to the aligned 112×112 chip
+        return FacePreprocessor.enhance(aligned)
     }
 
     /**

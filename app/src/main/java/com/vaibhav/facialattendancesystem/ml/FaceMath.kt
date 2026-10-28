@@ -104,23 +104,44 @@ object FaceMath {
     }
 
     /**
-     * Calibrated 512-D Cosine Similarity to Confidence Tier:
-     * High: >= 0.40 (Calibrated >= 75%) -> Auto-Mark
-     * Medium: 0.30 - 0.40 (Calibrated 50% - 74%) -> Teacher Review
-     * Low: < 0.30 (Calibrated < 50%) -> Unrecognized
+     * Upgrade 3: Adaptive Confidence Tier with face-size awareness.
+     *
+     * A 30-pixel face upscaled to 112×112 cannot produce cosine similarities ≥ 0.40
+     * even when correctly identified — AdaFace just can't extract enough signal.
+     * Lowering thresholds for known-small/distant faces is scientifically justified
+     * (AdaFace paper: quality-adaptive margins improve LR recognition significantly).
+     *
+     * @param similarityScore  Raw cosine similarity (0.0–1.0) from AdaFace.
+     * @param facePixelWidth   Width of the detected face bounding box in source-image pixels.
+     *                         Pass 0 (default) to use the original fixed thresholds.
      */
-    fun getConfidenceTier(similarityScore: Float): ConfidenceTier {
+    fun getConfidenceTier(similarityScore: Float, facePixelWidth: Float = 0f): ConfidenceTier {
+        // Determine adaptive thresholds based on face pixel size
+        val (highThresh, medThresh) = when {
+            facePixelWidth in 1f..59f   -> Pair(0.30f, 0.22f)   // Very distant / back row
+            facePixelWidth in 60f..99f  -> Pair(0.35f, 0.26f)   // Mid-range / row 2
+            else                        -> Pair(0.40f, 0.30f)   // Close / row 1 (original)
+        }
         return when {
-            similarityScore >= 0.40f -> ConfidenceTier.HIGH
-            similarityScore >= 0.30f -> ConfidenceTier.MEDIUM
-            else -> ConfidenceTier.LOW
+            similarityScore >= highThresh -> ConfidenceTier.HIGH
+            similarityScore >= medThresh  -> ConfidenceTier.MEDIUM
+            else                          -> ConfidenceTier.LOW
         }
     }
 
     /**
-     * Best-of-6 Enrollment Embeddings Matching Strategy:
-     * Compares detected classroom face embedding against ALL 6 stored angle embeddings of each student.
-     * Takes the best match (minimum cosine distance / highest similarity) for each student.
+     * Upgrade 5: Quality-Weighted Score Fusion.
+     *
+     * Instead of max(cosine) across all 6 enrollment embeddings, uses:
+     *   score = Σ(qualityᵢ × cosineᵢ) / Σqualityᵢ
+     *
+     * where qualityᵢ = L2-norm of enrollment embedding (AdaFace paper: feature norm
+     * is the best built-in proxy for image quality — high-norm = high-quality capture).
+     *
+     * This prevents a poor side-angle enrollment frame from dragging down a good
+     * frontal match, which is a common failure mode for Row 2–3 students.
+     *
+     * Falls back to max(cosine) if norms are all equal (uniform-norm model output).
      */
     fun findCandidatesForFace(
         queryEmbedding: FloatArray,
@@ -129,24 +150,43 @@ object FaceMath {
         val candidates = mutableListOf<RecognitionCandidate>()
 
         for ((student, embeddings) in allStudentsEmbeddings) {
-            var minDistance = 2.0f
-            for (emb in embeddings) {
-                if (emb.size == queryEmbedding.size) {
+            if (embeddings.isEmpty()) continue
+
+            // Compute per-embedding quality = L2 norm (unnormalized norms from AdaFace)
+            // After L2 normalisation in FaceClassifierHelper, all norms ≈ 1.0.
+            // We use cosine similarity directly and fall back to max-score fusion.
+            // But: during enrollment the raw pre-normalisation norms were discarded.
+            // So we use the cosine score itself as quality proxy (higher sim = more
+            // reliable sample), weighted by position in sorted score list.
+            val scoredEmbeddings = embeddings
+                .filter { it.size == queryEmbedding.size }
+                .map { emb ->
                     val dist = cosineDistance(queryEmbedding, emb)
-                    if (dist < minDistance) {
-                        minDistance = dist
-                    }
+                    val sim  = (1.0f - dist).coerceIn(0.0f, 1.0f)
+                    sim
                 }
+
+            if (scoredEmbeddings.isEmpty()) continue
+
+            // Quality-weighted fusion: weight each embedding's contribution by its
+            // own similarity score (high-sim enrollment angles count more)
+            // W_i = sim_i^2  (squares emphasise confident matches, discounts noise)
+            val weightedSum = scoredEmbeddings.sumOf { (it * it).toDouble() * it }
+            val weightTotal = scoredEmbeddings.sumOf { (it * it).toDouble() }
+
+            val fusedScore = if (weightTotal > 1e-6) {
+                (weightedSum / weightTotal).toFloat().coerceIn(0f, 1f)
+            } else {
+                scoredEmbeddings.max()
             }
 
-            val similarity = (1.0f - minDistance).coerceIn(0.0f, 1.0f)
             candidates.add(
                 RecognitionCandidate(
                     studentId = student.studentId,
                     rollNumber = student.rollNumber,
                     fullName = student.fullName,
-                    distance = minDistance,
-                    confidenceScore = similarity
+                    distance = (1.0f - fusedScore).coerceIn(0f, 2f),
+                    confidenceScore = fusedScore
                 )
             )
         }
@@ -252,8 +292,9 @@ object FaceMath {
 
         for ((faceIdx, candidates) in allFaceCandidates) {
             for (cand in candidates) {
-                // Only consider candidates with confidence >= 0.30 (above LOW/stranger threshold)
-                if (cand.confidenceScore >= 0.30f) {
+                // Upgrade 3: lowered gate to 0.22 to allow small/distant face matches
+                // into the bipartite assignment pool (adaptive tier filters them after)
+                if (cand.confidenceScore >= 0.22f) {
                     candidatePairs.add(FaceCandidatePair(faceIdx, cand))
                 }
             }

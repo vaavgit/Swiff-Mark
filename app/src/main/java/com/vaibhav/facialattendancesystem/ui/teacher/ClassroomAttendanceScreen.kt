@@ -557,8 +557,16 @@ fun CapturePhotoStepView(
                 colors   = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
                 modifier = Modifier.weight(2f).height(52.dp)
             ) {
-                if (isProcessing || inFlight) {
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.5.dp)
+                if (isProcessing) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.5.dp)
+                        Text("Analysing...", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
+                    }
+                } else if (inFlight) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.5.dp)
+                        Text("Picking best frame…", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                    }
                 } else {
                     Text("CAPTURE PHOTO", fontWeight = FontWeight.Bold, color = Color.White)
                 }
@@ -1054,7 +1062,11 @@ private fun processPhoto(
         val assignedCandidate = assignedMatches[faceIndex]
 
         val tier = if (assignedCandidate != null) {
-            FaceMath.getConfidenceTier(assignedCandidate.confidenceScore)
+            // Upgrade 3: pass face pixel width so thresholds are lowered for distant faces
+            FaceMath.getConfidenceTier(
+                assignedCandidate.confidenceScore,
+                facePixelWidth = face.boundingBox.width()
+            )
         } else {
             ConfidenceTier.LOW
         }
