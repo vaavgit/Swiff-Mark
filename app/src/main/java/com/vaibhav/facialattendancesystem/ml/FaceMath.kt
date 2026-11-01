@@ -168,17 +168,12 @@ object FaceMath {
 
             if (scoredEmbeddings.isEmpty()) continue
 
-            // Quality-weighted fusion: weight each embedding's contribution by its
-            // own similarity score (high-sim enrollment angles count more)
-            // W_i = sim_i^2  (squares emphasise confident matches, discounts noise)
-            val weightedSum = scoredEmbeddings.sumOf { (it * it).toDouble() * it }
-            val weightTotal = scoredEmbeddings.sumOf { (it * it).toDouble() }
-
-            val fusedScore = if (weightTotal > 1e-6) {
-                (weightedSum / weightTotal).toFloat().coerceIn(0f, 1f)
-            } else {
-                scoredEmbeddings.max()
-            }
+            // Nearest-neighbor multi-angle gallery matching:
+            // A query frame in the classroom is taken from a single pose. The match score
+            // against the student's multi-angle gallery is determined by their closest pose
+            // (maximum cosine similarity). This ensures students who diligently enrolled all 6
+            // angles are not penalized by orthogonal poses dragging down their match score.
+            val fusedScore = scoredEmbeddings.maxOrNull() ?: 0f
 
             candidates.add(
                 RecognitionCandidate(

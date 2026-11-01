@@ -87,9 +87,8 @@ object CloudSyncManager {
     @Synchronized
     private fun recoverFrom401(): String? {
         val sm = sessionManagerRef ?: return null
-        val session = sm.getSession()
 
-        // 1. Try refresh_token first
+        // 1. Try refresh_token rotation first (standard OAuth/GoTrue pattern)
         val refreshTok = sm.getRefreshToken()
         if (!refreshTok.isNullOrBlank()) {
             val refreshed = SupabaseAuthManager.refreshSessionBlocking(refreshTok)
@@ -100,24 +99,7 @@ object CloudSyncManager {
             }
         }
 
-        // 2. Try saved login credentials in SessionManager
-        val savedEmail = sm.getSavedEmail()
-        val savedPass = sm.getSavedPassword()
-        if (savedEmail.isNotBlank() && savedPass.isNotBlank()) {
-            val reSigned = SupabaseAuthManager.signInBlocking(savedEmail, savedPass)
-            if (reSigned != null) {
-                sm.updateTokens(reSigned.first, reSigned.second)
-                authToken = reSigned.first
-                return reSigned.first
-            }
-        }
-
-        // 3. Cannot use Room DB passwordHash for Supabase re-auth — it is SHA-256 hashed (for local
-        //    offline login only). Supabase requires the original plaintext password which we do NOT
-        //    store. Steps 1 (refresh_token) and 2 (saved credentials in SharedPrefs) are the only
-        //    recovery paths.
-
-        // 4. Clear expired token so fallback to SUPABASE_ANON_KEY can be attempted
+        // 2. Clear expired access token so caller handles unauthenticated state gracefully
         sm.updateAccessToken(null)
         authToken = null
         return null
@@ -439,7 +421,14 @@ object CloudSyncManager {
             val recordsArray = JSONArray()
             for (r in records) {
                 recordsArray.put(JSONObject().apply {
-                    put("session_id", r.sessionId); put("student_id", r.studentId); put("marked_present", r.markedPresent == 1)
+                    put("session_id", r.sessionId)
+                    put("student_id", r.studentId)
+                    put("marked_present", r.markedPresent == 1)
+                    put("photo1_matched", r.photo1Matched == 1)
+                    put("photo2_matched", r.photo2Matched == 1)
+                    put("dual_capture_present", r.dualCapturePresent == 1)
+                    put("confidence_score", (r.photo1MatchConfidence ?: r.photo2MatchConfidence ?: 0f).toDouble())
+                    put("manually_overridden", r.manualOverride == 1)
                 })
             }
             executeRequest("/rest/v1/attendance_records?on_conflict=session_id,student_id", "POST", recordsArray.toString(), mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
@@ -533,9 +522,30 @@ object CloudSyncManager {
                     isSynced = true
                 ))
 
-                db.attendanceDao().insertAttendanceRecords(listOf(AttendanceRecord(
-                    sessionId = sessionId, studentId = studentId, markedPresent = if (isPresent) 1 else 0
-                )))
+                val p1Matched = recObj.optBoolean("photo1_matched", false)
+                val p2Matched = recObj.optBoolean("photo2_matched", false)
+                val dualPresent = recObj.optBoolean("dual_capture_present", false)
+                val confScore = recObj.optDouble("confidence_score", 0.0).toFloat()
+                val manuallyOverridden = recObj.optBoolean("manually_overridden", false)
+
+                val mergedRecord = existingRecord?.copy(
+                    markedPresent = if (isPresent) 1 else 0,
+                    photo1Matched = existingRecord.photo1Matched ?: (if (p1Matched) 1 else 0),
+                    photo2Matched = existingRecord.photo2Matched ?: (if (p2Matched) 1 else 0),
+                    dualCapturePresent = existingRecord.dualCapturePresent ?: (if (dualPresent) 1 else 0),
+                    photo1MatchConfidence = existingRecord.photo1MatchConfidence ?: confScore,
+                    manualOverride = existingRecord.manualOverride ?: (if (manuallyOverridden) 1 else 0)
+                ) ?: AttendanceRecord(
+                    sessionId = sessionId,
+                    studentId = studentId,
+                    markedPresent = if (isPresent) 1 else 0,
+                    photo1Matched = if (p1Matched) 1 else 0,
+                    photo2Matched = if (p2Matched) 1 else 0,
+                    dualCapturePresent = if (dualPresent) 1 else 0,
+                    photo1MatchConfidence = confScore,
+                    manualOverride = if (manuallyOverridden) 1 else 0
+                )
+                db.attendanceDao().insertAttendanceRecords(listOf(mergedRecord))
 
                 // Only queue notification if:
                 // 1. Session is recent (within 24 hours)
@@ -696,19 +706,6 @@ object CloudSyncManager {
         } catch (e: Exception) { Pair(false, e.localizedMessage ?: "Sync Error") }
     }
 
-    suspend fun purgeCloudClassAndAttendanceData(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        try {
-            val zeroUuid = "00000000-0000-0000-0000-000000000000"
-            executeRequest("/rest/v1/attendance_records?session_id=neq.$zeroUuid", "DELETE")
-            executeRequest("/rest/v1/attendance_sessions?session_id=neq.$zeroUuid", "DELETE")
-            executeRequest("/rest/v1/class_enrollments?class_id=neq.$zeroUuid", "DELETE")
-            executeRequest("/rest/v1/classes?class_id=neq.$zeroUuid", "DELETE")
-            Pair(true, "Cloud classes and attendance data purged.")
-        } catch (e: Exception) {
-            Pair(false, e.localizedMessage ?: "Purge Error")
-        }
-    }
-
     suspend fun joinClassByCode(
         code: String,
         studentId: String,
@@ -723,6 +720,11 @@ object CloudSyncManager {
             }
 
             val rawClean = code.trim().uppercase().replace(" ", "")
+            // Strict input validation: alphanumeric and hyphens only (e.g. BT-1459, CS4921)
+            if (!rawClean.matches(Regex("^[A-Z0-9-]+$"))) {
+                return@withContext Pair(false, "Invalid join code format. Use letters, numbers and hyphens only.")
+            }
+
             // Support both "CS-4921" and "CS4921" formats automatically
             val altCode = if (!rawClean.contains("-") && rawClean.length >= 3) {
                 val letters = rawClean.takeWhile { it.isLetter() }
@@ -732,10 +734,10 @@ object CloudSyncManager {
                 rawClean.replace("-", "")
             }
 
-            var (status, response) = executeRequest("/rest/v1/classes?join_code=ilike.$rawClean&select=*", "GET")
+            var (status, response) = executeRequest("/rest/v1/classes?join_code=eq.$rawClean&select=*", "GET")
             var array = if (status in 200..299) JSONArray(response) else JSONArray()
             if (array.length() == 0 && altCode != rawClean) {
-                val retry = executeRequest("/rest/v1/classes?join_code=ilike.$altCode&select=*", "GET")
+                val retry = executeRequest("/rest/v1/classes?join_code=eq.$altCode&select=*", "GET")
                 status = retry.first
                 response = retry.second
                 array = if (status in 200..299) JSONArray(response) else JSONArray()
@@ -935,36 +937,37 @@ object CloudSyncManager {
         } catch (e: Exception) { false }
     }
 
-    suspend fun uploadStudentProfile(student: Student, embeddings: List<FloatArray>, password: String? = null): Boolean = withContext(Dispatchers.IO) {
+    suspend fun uploadStudentProfile(
+        student: Student,
+        embeddingsWithAngles: List<Pair<String, FloatArray>>,
+        password: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
             ensureCloudUserProfile(student.studentId, student.email, student.fullName, "STUDENT", student.rollNumber.toString(), student.classSection ?: "")
             val converters = VectorTypeConverters()
             executeRequest("/rest/v1/face_embeddings?student_id=eq.${student.studentId}", "DELETE")
-            for (emb in embeddings) {
+            for ((angle, emb) in embeddingsWithAngles) {
                 val base64 = Base64.encodeToString(converters.floatArrayToByteArray(emb), Base64.NO_WRAP)
                 executeRequest("/rest/v1/face_embeddings", "POST", JSONObject().apply {
-                    put("student_id", student.studentId); put("embedding_vector_base64", base64); put("angle_label", "FRONTAL")
+                    put("student_id", student.studentId)
+                    put("embedding_vector_base64", base64)
+                    put("angle_label", angle)
                 }.toString())
             }
             true
         } catch (e: Exception) { false }
     }
 
-    suspend fun uploadCalibrationSamples(studentId: String, samples: List<Pair<String, android.graphics.Bitmap>>): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val path = com.vaibhav.facialattendancesystem.BuildConfig.DIAGNOSTIC_SYNC_PATH
-            if (path.isNullOrBlank()) return@withContext true
-            for ((angle, bitmap) in samples) {
-                val outputStream = java.io.ByteArrayOutputStream()
-                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, outputStream)
-                val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
-                executeRequest("/rest/v1/$path", "POST", JSONObject().apply {
-                    put("student_id", studentId); put("angle_label", angle); put("image_base64", "data:image/jpeg;base64,$base64")
-                }.toString())
-            }
-            true
-        } catch (e: Exception) { false }
-    }
+    @JvmName("uploadStudentProfileVectors")
+    suspend fun uploadStudentProfile(
+        student: Student,
+        embeddings: List<FloatArray>,
+        password: String? = null
+    ): Boolean = uploadStudentProfile(
+        student,
+        embeddings.map { "FRONTAL" to it },
+        password
+    )
 
     suspend fun uploadNewClass(clazz: Clazz): Boolean = withContext(Dispatchers.IO) {
         try {

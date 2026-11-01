@@ -141,7 +141,7 @@ class SessionManager(context: Context) {
         editor.putBoolean(KEY_SAVE_LOGIN_ENABLED, save)
         if (save) {
             editor.putString(KEY_SAVED_EMAIL, email.trim())
-            editor.putString(KEY_SAVED_PASSWORD, password)
+            editor.remove(KEY_SAVED_PASSWORD) // Do NOT store plaintext password in SharedPrefs
             editor.putBoolean(KEY_SAVED_IS_TEACHER, isTeacher)
         } else {
             editor.remove(KEY_SAVED_EMAIL)
@@ -153,7 +153,7 @@ class SessionManager(context: Context) {
 
     fun isSaveLoginEnabled(): Boolean = prefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, false)
     fun getSavedEmail(): String = prefs.getString(KEY_SAVED_EMAIL, "") ?: ""
-    fun getSavedPassword(): String = prefs.getString(KEY_SAVED_PASSWORD, "") ?: ""
+    fun getSavedPassword(): String = "" // Plaintext password persistence disabled for security
     fun getSavedIsTeacher(): Boolean = prefs.getBoolean(KEY_SAVED_IS_TEACHER, false)
 
     // ── Theme Preference Persistence ──────────────────────────────────────────

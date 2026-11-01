@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vaibhav.facialattendancesystem.ml.FaceAligner
 import com.vaibhav.facialattendancesystem.ml.DetectedFace
 import com.vaibhav.facialattendancesystem.ml.FaceClassifierHelper
 import com.vaibhav.facialattendancesystem.ml.FaceDetectorHelper
@@ -282,18 +283,25 @@ fun StudentEnrollmentScreen(
                     currentFrame.width * 0.85f,
                     currentFrame.height * 0.85f
                 )
+                val targetFace = primaryFace
                 isProcessingStep = true
 
                 scope.launch(Dispatchers.Default) {
-                    val croppedFace = ImageQualityValidator.cropBitmapSafely(currentFrame, faceBox)
-                    val embedding = classifierHelper.getFaceEmbedding(croppedFace)
+                    // Upgrade: align eyes to canonical 112x112 grid and apply CLAHE + Unsharp Mask
+                    // so enrollment vectors and classroom attendance vectors match identically
+                    val alignedFace = if (targetFace != null) {
+                        FaceAligner.align(currentFrame, targetFace)
+                    } else {
+                        ImageQualityValidator.cropBitmapSafely(currentFrame, faceBox)
+                    }
+                    val embedding = classifierHelper.getFaceEmbedding(alignedFace)
                     val score = qualityMetrics?.overallQualityScore ?: 0.8f
 
                     withContext(Dispatchers.Main) {
                         capturedData.add(
                             CapturedStepData(
                                 stepAngle = currentAngle,
-                                bitmap = croppedFace,
+                                bitmap = alignedFace,
                                 faceBox = faceBox,
                                 embedding = embedding,
                                 qualityScore = score

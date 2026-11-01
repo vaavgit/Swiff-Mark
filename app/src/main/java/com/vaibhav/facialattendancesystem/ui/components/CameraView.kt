@@ -240,8 +240,10 @@ fun CameraView(
 
                 for (face in detectedFaces) {
                     val box = face.boundingBox
-                    val rawLeft  = if (isFrontCamera) (imageWidth - box.right) else box.left
-                    val rawRight = if (isFrontCamera) (imageWidth - box.left)  else box.right
+                    // Note: toBitmapSafely already mirrors the bitmap for front camera.
+                    // Detected bounding box coordinates are already in mirrored display space.
+                    val rawLeft  = box.left
+                    val rawRight = box.right
                     drawRect(
                         color    = PrimaryCyan,
                         topLeft  = Offset(rawLeft  * scale + dx, box.top    * scale + dy),

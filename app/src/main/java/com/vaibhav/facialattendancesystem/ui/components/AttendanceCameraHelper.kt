@@ -18,6 +18,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.vaibhav.facialattendancesystem.ml.DetectedFace
 import com.vaibhav.facialattendancesystem.ml.FaceDetectorHelper
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -45,7 +46,8 @@ import java.util.concurrent.atomic.AtomicInteger
 class AttendanceCameraHelper(private val context: Context) {
 
     private val analysisExecutor = Executors.newSingleThreadExecutor()
-    private val captureExecutor  = Executors.newSingleThreadExecutor()
+    private val captureExecutor  = Executors.newFixedThreadPool(2)
+    private val burstScheduler   = Executors.newSingleThreadScheduledExecutor()
 
     private var imageCapture: ImageCapture? = null
     private var camera: Camera? = null
@@ -200,10 +202,9 @@ class AttendanceCameraHelper(private val context: Context) {
             burstCallback = onBitmapReady
         }
 
-        // Fire 3 captures staggered by 250 ms each
+        // Fire 3 captures staggered by 270 ms each via non-blocking scheduler
         for (shotIndex in 0 until 3) {
-            captureExecutor.execute {
-                Thread.sleep(shotIndex * 270L)
+            burstScheduler.schedule({
                 capture.takePicture(
                     captureExecutor,
                     object : ImageCapture.OnImageCapturedCallback() {
@@ -251,7 +252,7 @@ class AttendanceCameraHelper(private val context: Context) {
                         }
                     }
                 )
-            }
+            }, shotIndex * 270L, TimeUnit.MILLISECONDS)
         }
     }
 
@@ -305,5 +306,6 @@ class AttendanceCameraHelper(private val context: Context) {
     fun release() {
         try { analysisExecutor.shutdown() } catch (_: Exception) {}
         try { captureExecutor.shutdown()  } catch (_: Exception) {}
+        try { burstScheduler.shutdown()   } catch (_: Exception) {}
     }
 }

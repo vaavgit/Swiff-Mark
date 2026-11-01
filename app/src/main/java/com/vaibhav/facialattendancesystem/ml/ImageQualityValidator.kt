@@ -84,7 +84,7 @@ object ImageQualityValidator {
             val mat = Mat()
             Utils.bitmapToMat(bitmap, mat)
             val grayMat = Mat()
-            Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_RGB2GRAY)
+            Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_RGBA2GRAY)
 
             val laplacianMat = Mat()
             Imgproc.Laplacian(grayMat, laplacianMat, CvType.CV_64F)
@@ -113,7 +113,7 @@ object ImageQualityValidator {
             val mat = Mat()
             Utils.bitmapToMat(bitmap, mat)
             val grayMat = Mat()
-            Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_RGB2GRAY)
+            Imgproc.cvtColor(mat, grayMat, Imgproc.COLOR_RGBA2GRAY)
 
             val meanVal = org.opencv.core.Core.mean(grayMat)
 
@@ -133,8 +133,13 @@ object ImageQualityValidator {
         return try {
             val mat = Mat()
             Utils.bitmapToMat(bitmap, mat)
+            val rgbMat = Mat()
+            Imgproc.cvtColor(mat, rgbMat, Imgproc.COLOR_RGBA2RGB)
+            mat.release()
+
             val yuvMat = Mat()
-            Imgproc.cvtColor(mat, yuvMat, Imgproc.COLOR_RGB2YCrCb)
+            Imgproc.cvtColor(rgbMat, yuvMat, Imgproc.COLOR_RGB2YCrCb)
+            rgbMat.release()
 
             val channels = ArrayList<Mat>()
             org.opencv.core.Core.split(yuvMat, channels)
@@ -144,14 +149,16 @@ object ImageQualityValidator {
             org.opencv.core.Core.merge(channels, yuvMat)
             val resultMat = Mat()
             Imgproc.cvtColor(yuvMat, resultMat, Imgproc.COLOR_YCrCb2RGB)
-
-            val outputBitmap = Bitmap.createBitmap(resultMat.cols(), resultMat.rows(), Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(resultMat, outputBitmap)
-
-            mat.release()
             yuvMat.release()
-            resultMat.release()
             for (c in channels) c.release()
+
+            val rgbaMat = Mat()
+            Imgproc.cvtColor(resultMat, rgbaMat, Imgproc.COLOR_RGB2RGBA)
+            resultMat.release()
+
+            val outputBitmap = Bitmap.createBitmap(rgbaMat.cols(), rgbaMat.rows(), Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(rgbaMat, outputBitmap)
+            rgbaMat.release()
 
             outputBitmap
         } catch (e: Exception) {
@@ -162,14 +169,16 @@ object ImageQualityValidator {
     fun cropBitmapSafely(bitmap: Bitmap, rect: RectF, marginPercent: Float = 0.15f): Bitmap {
         val widthMargin = rect.width() * marginPercent
         val heightMargin = rect.height() * marginPercent
+        val maxW = bitmap.width
+        val maxH = bitmap.height
 
-        val expandedLeft = (rect.left - widthMargin).toInt().coerceIn(0, bitmap.width - 1)
-        val expandedTop = (rect.top - heightMargin).toInt().coerceIn(0, bitmap.height - 1)
-        val expandedRight = (rect.right + widthMargin).toInt().coerceIn(expandedLeft + 1, bitmap.width)
-        val expandedBottom = (rect.bottom + heightMargin).toInt().coerceIn(expandedTop + 1, bitmap.height)
+        val expandedLeft = (rect.left - widthMargin).toInt().coerceIn(0, maxW - 1)
+        val expandedTop = (rect.top - heightMargin).toInt().coerceIn(0, maxH - 1)
+        val expandedRight = (rect.right + widthMargin).toInt().coerceIn(expandedLeft + 1, maxW)
+        val expandedBottom = (rect.bottom + heightMargin).toInt().coerceIn(expandedTop + 1, maxH)
 
-        val cropWidth = expandedRight - expandedLeft
-        val cropHeight = expandedBottom - expandedTop
+        val cropWidth = (expandedRight - expandedLeft).coerceIn(1, maxW - expandedLeft)
+        val cropHeight = (expandedBottom - expandedTop).coerceIn(1, maxH - expandedTop)
 
         return Bitmap.createBitmap(bitmap, expandedLeft, expandedTop, cropWidth, cropHeight)
     }

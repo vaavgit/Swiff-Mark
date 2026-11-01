@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -34,16 +35,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun attendanceDao(): AttendanceDao
     abstract fun recognitionLogDao(): RecognitionLogDao
 
-    suspend fun purgeClassesAndAttendanceData(purgeCloud: Boolean = true): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun purgeClassesAndAttendanceData(purgeCloud: Boolean = false): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             recognitionLogDao().deleteAllLogs()
             attendanceDao().deleteAllAttendanceRecords()
             attendanceDao().deleteAllAttendanceSessions()
             classEnrollmentDao().deleteAllEnrollments()
             clazzDao().deleteAllClasses()
-            if (purgeCloud) {
-                CloudSyncManager.purgeCloudClassAndAttendanceData()
-            }
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -62,6 +60,12 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "facial_attendance_database"
                 )
+                    .addCallback(object : RoomDatabase.Callback() {
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            db.execSQL("PRAGMA foreign_keys = ON;")
+                        }
+                    })
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

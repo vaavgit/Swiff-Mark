@@ -400,11 +400,8 @@ fun AppNavigation(
                                             authResult.message.contains("connection", ignoreCase = true)
                                     val localUser = db.userDao().getUserByEmail(email)
                                     val hashedInput = sha256(password)
-                                    val passwordMatches = localUser != null && (localUser.passwordHash == hashedInput || localUser.passwordHash == password)
+                                    val passwordMatches = localUser != null && localUser.passwordHash == hashedInput
                                     if (isNetworkErr && passwordMatches && localUser != null) {
-                                        if (localUser.passwordHash != hashedInput) {
-                                            db.userDao().insertUser(localUser.copy(passwordHash = hashedInput))
-                                        }
                                         sessionManager.saveLoginCredentials(email, password, isTeacher, saveLogin)
                                         if (isTeacher) {
                                             val teacher = db.teacherDao().getTeacherByUserId(localUser.userId)
@@ -788,17 +785,15 @@ fun AppNavigation(
                                 }
                             }
 
-                            // Sync profile and calibration embeddings to cloud in background (do NOT set face photo as avatar)
+                            // Sync profile and multi-angle embeddings to cloud in background (do NOT upload face photos)
                             if (student != null) {
                                 val updatedStudent = student.copy(enrollmentStatus = 1)
-                                val allVectors = capturedSteps.map { it.embedding } + listOf(averagedVector)
+                                val allVectorsWithAngles = capturedSteps.map { it.stepAngle to it.embedding } + listOf("FUSED_AVERAGE" to averagedVector)
                                 com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadStudentProfile(
                                     student = updatedStudent,
-                                    embeddings = allVectors,
+                                    embeddingsWithAngles = allVectorsWithAngles,
                                     password = user?.passwordHash
                                 )
-                                val angleBitmaps = capturedSteps.map { it.stepAngle to it.bitmap }
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadCalibrationSamples(studentId, angleBitmaps)
                             }
                         }
                     }
@@ -1275,7 +1270,7 @@ fun AppNavigation(
                         enrolledStudents = enrolledStudents,
                         pendingStudents = pendingStudents,
                         attendanceRecords = classRecords,
-                        totalSessionsCount = classSessions.size,
+                        totalSessionsCount = classSessions.count { it.sessionStatus == "COMPLETED" },
                         isSyncing = isSyncingRoster,
                         onMarkAttendance = {
                             navController.navigate(Screen.ClassroomAttendance.createRoute(clazz!!.classId, clazz!!.className))
@@ -1452,7 +1447,7 @@ fun AppNavigation(
                         allEmbeddings = allEmbeddingsData,
                         sessionId = sessionId,
                         recognitionLogDao = db.recognitionLogDao(),
-                        onConfirmAttendance = { p1Path, p2Path, presentStudentIds ->
+                        onConfirmAttendance = { p1Path, p2Path, presentStudentIds, p1Statuses, p2Statuses, p1FaceCount, p2FaceCount ->
                         scope.launch(Dispatchers.IO) {
                             try {
                                 val session = AttendanceSession(
@@ -1460,22 +1455,33 @@ fun AppNavigation(
                                     sessionId = sessionId,
                                     classId = classId,
                                     photo1Path = p1Path,
-                                    photo1FacesDetected = enrolledStudents.size,  // total enrolled, not just present
+                                    photo1FacesDetected = p1FaceCount,
                                     photo2Path = p2Path,
-                                    photo2FacesDetected = enrolledStudents.size,
+                                    photo2FacesDetected = p2FaceCount,
                                     sessionStatus = "COMPLETED"
                                 )
                                 db.attendanceDao().insertSession(session)
 
+                                val p1Map = p1Statuses.associateBy { it.student.studentId }
+                                val p2Map = p2Statuses.associateBy { it.student.studentId }
+
                                 val records = enrolledStudents.map { student ->
-                                    val isPresent = if (presentStudentIds.contains(student.studentId)) 1 else 0
+                                    val isFinalPresent = if (presentStudentIds.contains(student.studentId)) 1 else 0
+                                    val p1 = p1Map[student.studentId]
+                                    val p2 = p2Map[student.studentId]
+                                    val p1Matched = if (p1?.isMarkedPresent == true) 1 else 0
+                                    val p2Matched = if (p2?.isMarkedPresent == true) 1 else 0
+                                    val dualPresent = if (p1Matched == 1 && p2Matched == 1) 1 else 0
+
                                     AttendanceRecord(
                                         sessionId = session.sessionId,
                                         studentId = student.studentId,
-                                        photo1Matched = isPresent,
-                                        photo2Matched = isPresent,
-                                        dualCapturePresent = isPresent,
-                                        markedPresent = isPresent
+                                        photo1MatchConfidence = p1?.matchConfidence,
+                                        photo1Matched = p1Matched,
+                                        photo2MatchConfidence = p2?.matchConfidence,
+                                        photo2Matched = p2Matched,
+                                        dualCapturePresent = dualPresent,
+                                        markedPresent = isFinalPresent
                                     )
                                 }
                                 db.attendanceDao().insertAttendanceRecords(records)

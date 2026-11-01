@@ -116,11 +116,120 @@ ALTER TABLE public.face_embeddings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_records ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow all on profiles" ON public.profiles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on students" ON public.students FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on teachers" ON public.teachers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on classes" ON public.classes FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on enrollments" ON public.class_enrollments FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on embeddings" ON public.face_embeddings FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on sessions" ON public.attendance_sessions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on records" ON public.attendance_records FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+-- 1. Profiles: Users can read/write their own profile; teachers can read profiles of enrolled students
+CREATE POLICY "Profiles select policy" ON public.profiles FOR SELECT TO authenticated
+    USING (auth.uid()::text = id OR EXISTS (
+        SELECT 1 FROM public.class_enrollments ce
+        JOIN public.classes c ON c.class_id = ce.class_id
+        WHERE ce.student_id = public.profiles.id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Profiles insert policy" ON public.profiles FOR INSERT TO authenticated
+    WITH CHECK (auth.uid()::text = id);
+CREATE POLICY "Profiles update policy" ON public.profiles FOR UPDATE TO authenticated
+    USING (auth.uid()::text = id) WITH CHECK (auth.uid()::text = id);
+CREATE POLICY "Profiles delete policy" ON public.profiles FOR DELETE TO authenticated
+    USING (auth.uid()::text = id);
+
+-- 2. Students: Students can manage own profile; teachers can read enrolled students
+CREATE POLICY "Students select policy" ON public.students FOR SELECT TO authenticated
+    USING (auth.uid()::text = student_id OR EXISTS (
+        SELECT 1 FROM public.class_enrollments ce
+        JOIN public.classes c ON c.class_id = ce.class_id
+        WHERE ce.student_id = public.students.student_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Students insert policy" ON public.students FOR INSERT TO authenticated
+    WITH CHECK (auth.uid()::text = student_id);
+CREATE POLICY "Students update policy" ON public.students FOR UPDATE TO authenticated
+    USING (auth.uid()::text = student_id) WITH CHECK (auth.uid()::text = student_id);
+CREATE POLICY "Students delete policy" ON public.students FOR DELETE TO authenticated
+    USING (auth.uid()::text = student_id);
+
+-- 3. Teachers: Readable by authenticated users; managed only by the teacher
+CREATE POLICY "Teachers select policy" ON public.teachers FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Teachers insert policy" ON public.teachers FOR INSERT TO authenticated
+    WITH CHECK (auth.uid()::text = teacher_id);
+CREATE POLICY "Teachers update policy" ON public.teachers FOR UPDATE TO authenticated
+    USING (auth.uid()::text = teacher_id) WITH CHECK (auth.uid()::text = teacher_id);
+CREATE POLICY "Teachers delete policy" ON public.teachers FOR DELETE TO authenticated
+    USING (auth.uid()::text = teacher_id);
+
+-- 4. Classes: Searchable by code; insert/update/delete restricted to owning teacher
+CREATE POLICY "Classes select policy" ON public.classes FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Classes insert policy" ON public.classes FOR INSERT TO authenticated
+    WITH CHECK (auth.uid()::text = teacher_id);
+CREATE POLICY "Classes update policy" ON public.classes FOR UPDATE TO authenticated
+    USING (auth.uid()::text = teacher_id) WITH CHECK (auth.uid()::text = teacher_id);
+CREATE POLICY "Classes delete policy" ON public.classes FOR DELETE TO authenticated
+    USING (auth.uid()::text = teacher_id);
+
+-- 5. Class Enrollments: Students enroll themselves; teachers read/remove enrollments for their classes
+CREATE POLICY "Enrollments select policy" ON public.class_enrollments FOR SELECT TO authenticated
+    USING (auth.uid()::text = student_id OR EXISTS (
+        SELECT 1 FROM public.classes c WHERE c.class_id = public.class_enrollments.class_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Enrollments insert policy" ON public.class_enrollments FOR INSERT TO authenticated
+    WITH CHECK (auth.uid()::text = student_id);
+CREATE POLICY "Enrollments delete policy" ON public.class_enrollments FOR DELETE TO authenticated
+    USING (auth.uid()::text = student_id OR EXISTS (
+        SELECT 1 FROM public.classes c WHERE c.class_id = public.class_enrollments.class_id AND c.teacher_id = auth.uid()::text
+    ));
+
+-- 6. Face Embeddings: Strictly managed by student; readable by student and teachers of their classes
+CREATE POLICY "Embeddings select policy" ON public.face_embeddings FOR SELECT TO authenticated
+    USING (auth.uid()::text = student_id OR EXISTS (
+        SELECT 1 FROM public.class_enrollments ce
+        JOIN public.classes c ON c.class_id = ce.class_id
+        WHERE ce.student_id = public.face_embeddings.student_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Embeddings insert policy" ON public.face_embeddings FOR INSERT TO authenticated
+    WITH CHECK (auth.uid()::text = student_id);
+CREATE POLICY "Embeddings delete policy" ON public.face_embeddings FOR DELETE TO authenticated
+    USING (auth.uid()::text = student_id);
+
+-- 7. Attendance Sessions: Managed exclusively by the class's teacher; readable by enrolled students
+CREATE POLICY "Sessions select policy" ON public.attendance_sessions FOR SELECT TO authenticated
+    USING (EXISTS (
+        SELECT 1 FROM public.classes c WHERE c.class_id = public.attendance_sessions.class_id AND (
+            c.teacher_id = auth.uid()::text OR EXISTS (
+                SELECT 1 FROM public.class_enrollments ce WHERE ce.class_id = c.class_id AND ce.student_id = auth.uid()::text
+            )
+        )
+    ));
+CREATE POLICY "Sessions insert policy" ON public.attendance_sessions FOR INSERT TO authenticated
+    WITH CHECK (EXISTS (
+        SELECT 1 FROM public.classes c WHERE c.class_id = public.attendance_sessions.class_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Sessions update policy" ON public.attendance_sessions FOR UPDATE TO authenticated
+    USING (EXISTS (
+        SELECT 1 FROM public.classes c WHERE c.class_id = public.attendance_sessions.class_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Sessions delete policy" ON public.attendance_sessions FOR DELETE TO authenticated
+    USING (EXISTS (
+        SELECT 1 FROM public.classes c WHERE c.class_id = public.attendance_sessions.class_id AND c.teacher_id = auth.uid()::text
+    ));
+
+-- 8. Attendance Records: Only teachers can mark attendance; students have read-only access to their own records
+CREATE POLICY "Records select policy" ON public.attendance_records FOR SELECT TO authenticated
+    USING (auth.uid()::text = student_id OR EXISTS (
+        SELECT 1 FROM public.attendance_sessions s
+        JOIN public.classes c ON c.class_id = s.class_id
+        WHERE s.session_id = public.attendance_records.session_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Records insert policy" ON public.attendance_records FOR INSERT TO authenticated
+    WITH CHECK (EXISTS (
+        SELECT 1 FROM public.attendance_sessions s
+        JOIN public.classes c ON c.class_id = s.class_id
+        WHERE s.session_id = public.attendance_records.session_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Records update policy" ON public.attendance_records FOR UPDATE TO authenticated
+    USING (EXISTS (
+        SELECT 1 FROM public.attendance_sessions s
+        JOIN public.classes c ON c.class_id = s.class_id
+        WHERE s.session_id = public.attendance_records.session_id AND c.teacher_id = auth.uid()::text
+    ));
+CREATE POLICY "Records delete policy" ON public.attendance_records FOR DELETE TO authenticated
+    USING (EXISTS (
+        SELECT 1 FROM public.attendance_sessions s
+        JOIN public.classes c ON c.class_id = s.class_id
+        WHERE s.session_id = public.attendance_records.session_id AND c.teacher_id = auth.uid()::text
+    ));

@@ -117,13 +117,17 @@ private fun buildStudentStatuses(
     // For each student, find the best (highest confidence) recognition result
     val bestConf  = mutableMapOf<String, Float>()
     val bestTier  = mutableMapOf<String, ConfidenceTier>()
+    val confirmedManually = mutableMapOf<String, Boolean>()
 
     for (result in recognitionResults) {
         val sid  = result.selectedStudentId ?: continue
         val conf = result.topMatch?.confidenceScore ?: 0f
-        if ((bestConf[sid] ?: -1f) < conf) {
+        if ((bestConf[sid] ?: -1f) < conf || result.manuallyConfirmed) {
             bestConf[sid] = conf
             bestTier[sid] = result.confidenceTier
+            if (result.manuallyConfirmed) {
+                confirmedManually[sid] = true
+            }
         }
     }
 
@@ -131,13 +135,14 @@ private fun buildStudentStatuses(
         val conf     = bestConf[student.studentId] ?: 0f
         val tier     = bestTier[student.studentId] ?: ConfidenceTier.LOW
         val detected = bestConf.containsKey(student.studentId)
+        val isManual = confirmedManually[student.studentId] == true
         StudentDetectionStatus(
             student         = student,
             detectedInPhoto = detected,
             confidenceTier  = tier,
             matchConfidence = conf,
-            // HIGH → auto-present; MEDIUM → present but amber; LOW/absent → false
-            isMarkedPresent = detected && (tier == ConfidenceTier.HIGH || tier == ConfidenceTier.MEDIUM)
+            // HIGH/MEDIUM auto-present, or teacher manually confirmed assignment
+            isMarkedPresent = isManual || (detected && (tier == ConfidenceTier.HIGH || tier == ConfidenceTier.MEDIUM))
         )
     }
 }
@@ -179,7 +184,15 @@ fun ClassroomAttendanceScreen(
     allEmbeddings: List<Pair<Student, List<FloatArray>>>,
     sessionId: String,
     recognitionLogDao: RecognitionLogDao,
-    onConfirmAttendance: (photo1Path: String, photo2Path: String, presentStudentIds: Set<String>) -> Unit,
+    onConfirmAttendance: (
+        photo1Path: String,
+        photo2Path: String,
+        presentStudentIds: Set<String>,
+        photo1Statuses: List<StudentDetectionStatus>,
+        photo2Statuses: List<StudentDetectionStatus>,
+        photo1FaceCount: Int,
+        photo2FaceCount: Int
+    ) -> Unit,
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
@@ -197,10 +210,12 @@ fun ClassroomAttendanceScreen(
 
     // Photo 1 state
     var photo1Path by remember { mutableStateOf("") }
+    var photo1FacesCount by remember { mutableStateOf(0) }
     val photo1Statuses = remember { mutableStateListOf<StudentDetectionStatus>() }
 
     // Photo 2 state
     var photo2Path by remember { mutableStateOf("") }
+    var photo2FacesCount by remember { mutableStateOf(0) }
     val photo2Statuses = remember { mutableStateListOf<StudentDetectionStatus>() }
 
     // Check for a saved draft session on first open
@@ -288,6 +303,7 @@ fun ClassroomAttendanceScreen(
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
                             photo1Path = savedPath
+                            photo1FacesCount = results.size
                             photo1Statuses.clear()
                             photo1Statuses.addAll(statuses)
                             isProcessing = false
@@ -349,6 +365,7 @@ fun ClassroomAttendanceScreen(
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
                             photo2Path = savedPath
+                            photo2FacesCount = results.size
                             photo2Statuses.clear()
                             photo2Statuses.addAll(statuses)
                             isProcessing = false
@@ -380,7 +397,15 @@ fun ClassroomAttendanceScreen(
                 photo2Statuses   = photo2Statuses,
                 onConfirm        = { finalPresentIds ->
                     clearDraft(prefs, classId)
-                    onConfirmAttendance(photo1Path, photo2Path, finalPresentIds)
+                    onConfirmAttendance(
+                        photo1Path,
+                        photo2Path,
+                        finalPresentIds,
+                        photo1Statuses.toList(),
+                        photo2Statuses.toList(),
+                        photo1FacesCount,
+                        photo2FacesCount
+                    )
                 },
                 onRetake = { stage = AttendanceCaptureStage.TAKE_PHOTO_1 }
             )
@@ -1054,6 +1079,7 @@ private fun processPhoto(
     val assignedMatches = FaceMath.assignMultiFaceMatches(faceCandidateMap)
 
     val results = mutableListOf<RecognitionResult>()
+    val logsToBatch = mutableListOf<RecognitionLog>()
 
     for ((index, face) in faces.withIndex()) {
         val faceIndex = index + 1
@@ -1075,34 +1101,30 @@ private fun processPhoto(
         val top5Summary = top5.joinToString(",") { "${it.studentId}:${"%.4f".format(it.confidenceScore)}" }
 
         sortedCandidates.forEachIndexed { ci, candidate ->
-            try {
-                logDao.insertLog(
-                    RecognitionLog(
-                        sessionId = sessionId,
-                        detectedFaceIndex = faceIndex,
-                        matchedStudentId = candidate.studentId,
-                        confidenceScore = candidate.confidenceScore,
-                        top5Candidates = if (ci == 0) top5Summary else null,
-                        processingTimeMs = if (ci == 0) elapsedMs else null,
-                        photoLabel = photoLabel
-                    )
+            logsToBatch.add(
+                RecognitionLog(
+                    sessionId = sessionId,
+                    detectedFaceIndex = faceIndex,
+                    matchedStudentId = candidate.studentId,
+                    confidenceScore = candidate.confidenceScore,
+                    top5Candidates = if (ci == 0) top5Summary else null,
+                    processingTimeMs = if (ci == 0) elapsedMs else null,
+                    photoLabel = photoLabel
                 )
-            } catch (e: Exception) { e.printStackTrace() }
+            )
         }
 
         if (sortedCandidates.isEmpty()) {
-            try {
-                logDao.insertLog(
-                    RecognitionLog(
-                        sessionId = sessionId,
-                        detectedFaceIndex = faceIndex,
-                        matchedStudentId = null,
-                        confidenceScore = 0f,
-                        errorMessage = "no_enrolled_students",
-                        photoLabel = photoLabel
-                    )
+            logsToBatch.add(
+                RecognitionLog(
+                    sessionId = sessionId,
+                    detectedFaceIndex = faceIndex,
+                    matchedStudentId = null,
+                    confidenceScore = 0f,
+                    errorMessage = "no_enrolled_students",
+                    photoLabel = photoLabel
                 )
-            } catch (e: Exception) { e.printStackTrace() }
+            )
         }
 
         results.add(
@@ -1116,5 +1138,14 @@ private fun processPhoto(
             )
         )
     }
+
+    if (logsToBatch.isNotEmpty()) {
+        try {
+            logDao.insertLogs(logsToBatch)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     return results
 }

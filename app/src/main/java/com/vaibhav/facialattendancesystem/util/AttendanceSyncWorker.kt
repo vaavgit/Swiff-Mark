@@ -31,7 +31,10 @@ class AttendanceSyncWorker(
                     if (localStudent != null) {
                         val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
                         val localEmbs = db.faceEmbeddingDao().getEmbeddingsForStudent(session.userId)
-                            .mapNotNull { converters.byteArrayToFloatArray(it.embeddingVector) }
+                            .mapNotNull { emb ->
+                                val vec = converters.byteArrayToFloatArray(emb.embeddingVector)
+                                if (vec != null) emb.sourceAngle to vec else null
+                            }
                         if (localEmbs.isNotEmpty()) {
                             CloudSyncManager.uploadStudentProfile(localStudent, localEmbs)
                         } else {

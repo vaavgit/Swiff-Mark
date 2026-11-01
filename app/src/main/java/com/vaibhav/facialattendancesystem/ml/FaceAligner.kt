@@ -29,9 +29,12 @@ import com.google.mlkit.vision.face.FaceLandmark
 object FaceAligner {
 
     // Destination (canonical) eye positions in 112x112 pixel space
+    // Note: Canonical coordinates are in viewer space:
+    //   Viewer's left  (Subject's RIGHT eye) -> (38.29, 51.69)
+    //   Viewer's right (Subject's LEFT eye)  -> (73.53, 51.50)
     private val CANONICAL_EYES = floatArrayOf(
-        38.29f, 51.69f,   // LEFT_EYE  (x, y)
-        73.53f, 51.50f    // RIGHT_EYE (x, y)
+        38.29f, 51.69f,   // Viewer's Left  / Subject's RIGHT eye (x, y)
+        73.53f, 51.50f    // Viewer's Right / Subject's LEFT eye  (x, y)
     )
 
     const val OUTPUT_SIZE = 112
@@ -53,9 +56,11 @@ object FaceAligner {
         }
 
         val aligned = try {
+            // Note: ML Kit's FaceLandmark.RIGHT_EYE is the subject's anatomical right eye (viewer's left).
+            // Passing rightEye first to match canonical viewer's left (38.29, 51.69) prevents horizontal mirroring.
             val srcPts = floatArrayOf(
-                leftEye.x,  leftEye.y,
-                rightEye.x, rightEye.y
+                rightEye.x, rightEye.y,
+                leftEye.x,  leftEye.y
             )
             val matrix = Matrix()
             // 2 source<->dest point pairs -> similarity transform (no shear/perspective)
@@ -85,12 +90,14 @@ object FaceAligner {
         val box   = face.boundingBox
         val padX  = box.width()  * 0.20f
         val padY  = box.height() * 0.20f
-        val left  = (box.left   - padX).coerceAtLeast(0f).toInt()
-        val top   = (box.top    - padY).coerceAtLeast(0f).toInt()
-        val right = (box.right  + padX).coerceAtMost(bitmap.width.toFloat()).toInt()
-        val bot   = (box.bottom + padY).coerceAtMost(bitmap.height.toFloat()).toInt()
-        val w     = (right - left).coerceAtLeast(1)
-        val h     = (bot   - top ).coerceAtLeast(1)
+        val maxW  = bitmap.width
+        val maxH  = bitmap.height
+        val left  = (box.left   - padX).toInt().coerceIn(0, maxW - 1)
+        val top   = (box.top    - padY).toInt().coerceIn(0, maxH - 1)
+        val right = (box.right  + padX).toInt().coerceIn(left + 1, maxW)
+        val bot   = (box.bottom + padY).toInt().coerceIn(top + 1, maxH)
+        val w     = (right - left).coerceIn(1, maxW - left)
+        val h     = (bot   - top ).coerceIn(1, maxH - top)
 
         val cropped = Bitmap.createBitmap(bitmap, left, top, w, h)
         return if (cropped.width != OUTPUT_SIZE || cropped.height != OUTPUT_SIZE) {

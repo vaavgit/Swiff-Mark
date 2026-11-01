@@ -37,17 +37,16 @@ object FacePreprocessor {
 
     /**
      * Attempts to initialise OpenCV. Call once from Application or MainActivity.
+     * Uses OpenCVLoader.initLocal() to load native .so libraries.
      * Returns true if OpenCV is available. If false, preprocessing falls back to
      * the identity function (chip returned unchanged).
      */
     fun tryInit(): Boolean {
         return try {
             if (!isOpenCVLoaded) {
-                // OpenCV for Android initialises lazily when the static loader runs
-                org.opencv.core.Core.getBuildInformation() // Trigger native load
-                isOpenCVLoaded = true
+                isOpenCVLoaded = org.opencv.android.OpenCVLoader.initLocal()
             }
-            true
+            isOpenCVLoaded
         } catch (e: Throwable) {
             false
         }
@@ -61,6 +60,9 @@ object FacePreprocessor {
      *              OpenCV is unavailable (safe degradation).
      */
     fun enhance(chip: Bitmap): Bitmap {
+        if (!isOpenCVLoaded) {
+            tryInit()
+        }
         if (!isOpenCVLoaded) return chip
         return try {
             enhanceInternal(chip)

@@ -1,179 +1,129 @@
 # Swiff Mark
 
-> Smarter classroom attendance using face recognition. No roll call shouting, no paper sheets, no proxy attendance.
 
 [![Download Latest APK](https://img.shields.io/badge/Download_APK-v1.2.2-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
-
 [![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9+-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Privacy Policy](https://img.shields.io/badge/Privacy-Policy-blue?style=flat)](./docs/privacy-policy.md)
 
-In almost every college lecture, 10 to 15 minutes get wasted just calling out roll numbers or passing around an attendance sheet that inevitably gets filled with fake signatures for absent friends.
+In most college lectures, 10 to 15 minutes get wasted calling out roll numbers or passing around paper sheets that inevitably end up with fake signatures for absent friends.
 
-**Swiff Mark** is an Android app built to eliminate that hassle. Instead of wasting lecture time, the professor simply takes two quick photos of the room—one when lecture starts, and one before everyone leaves. The app finds the students in the photos, matches them against the enrolled class roster on the spot, and marks attendance automatically.
-
----
-
-## 💡 Why We Built It (And Why Two Photos?)
-
-Proxy attendance is the oldest trick in college. Students slip out halfway through class or get friends to sign on paper registers.
-
-To stop that without needing expensive biometric turnstiles, Swiff Mark uses a **Dual-Capture check**:
-1. **Start of Class:** Professor clicks a photo of the classroom.
-2. **End of Class:** Professor takes a second photo before students pack up.
-3. **The Result:** If you're in both photos, you're marked **Present**. If you skipped out early or strolled in late, you're marked **Absent** (with an optional manual override if the teacher needs to make an exception).
-
-Everything runs locally on the teacher's phone in a few seconds, so it doesn't grind to a halt even if the campus Wi-Fi is spotty.
+Swiff Mark is a Facial attendance system built for andriod to eliminate that friction. Instead of manual roll calls, the instructor takes two quick photos of the lecture hall—one when class begins, and one before students leave. The app identifies students in the pictures, matches them against the enrolled class roster on the spot, and marks attendance automatically.
 
 ---
 
-## ✨ Features That Actually Matter
+## Why We Built It ?
 
-### 👨‍🏫 For Professors & Instructors
-- **Fast Roll Call:** Snap two photos, and the app matches everyone in seconds.
-- **Class Join Codes:** Create a class, share a short join code (like `CS-4921`), and only enrolled students can join.
-- **Manual Review:** See green/red bounding boxes over detected student faces with an easy toggle to fix edge cases or overrides.
-- **Attendance History Deep-Dive:** Tap any session to see a full breakdown of who was present, absent, or late. Correct any mistakes instantly.
-- **Fast Search & Filters:** Filter your class roster by name, status, or attendance percentage. One-tap defaulter (< 75%) filter.
-- **College Register CSV Export:** Need to submit monthly reports to the department or HOD? One tap generates an official attendance matrix register with:
-  - Day-by-day attendance (`P` / `A`) for every student.
-  - Automatic defaulter calculation (shows students below 75% and exactly how many classes they need to attend to become eligible).
-  - Ready-to-print header and signature rows for the Dean / HOD.
-- **1-Tap Defaulter Notice:** Auto-generates a warning notice for students below 75% attendance and exports it as a shareable CSV.
+Proxy attendance is an old problem. Students often leave early or ask peers to sign paper registers on their behalf.
 
-### 🎓 For Students
-- **Instant Attendance Alerts:** The moment your professor finishes marking the session, you get a clean push notification (✅ green tick) showing if you were marked Present or Absent, plus your updated attendance percentage — typically within 2–8 seconds.
-- **No Duplicate Alerts:** Anti-spam deduplication ensures you only get notified once per session, never again for the same class.
-- **Personal Dashboard:** Track your attendance across all your subjects, see your overall percentage, and know when you're getting dangerously close to the 75% shortage limit.
-- **Mutual Profile Photos:** Clean profile customization so teachers recognize who's who in their roster.
+To address this without requiring hardware turnstiles or dedicated scanners, Swiff Mark uses a dual-capture verification approach:
+
+1. Start of Class: The instructor takes a wide photo of the room.
+2. End of Class: The instructor takes a second photo before students pack up.
+3. Matching: If a student appears in both photos, they are marked Present. If someone left halfway or walked in late, they are marked Absent (with a manual override available if the teacher needs to make an exception).
+
+Recognition runs entirely on the teacher's phone in a few seconds, functioning smoothly even when campus Wi-Fi is unstable or offline.
 
 ---
 
-## 🧠 How the Face Matching Works
+## Application Preview
 
-Under the hood, all recognition happens directly on the device using Google ML Kit and TensorFlow Lite:
+<p align="center">
+  <img src="docs/screenshots/login_teacher_portal.png" width="36%" alt="Teacher Portal Login" />
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/signup_screen.png" width="36%" alt="Account Registration" />
+</p>
+<p align="center">
+  <em>Teacher Portal Authentication (left) and Account Registration (right).</em>
+</p>
 
-```
-[ Classroom Photo ]
-       │
-       ▼
-1. Face Detection (Google ML Kit)
-   Finds all faces in the wide classroom photo and crops each face chip.
-       │
-       ▼
-2. Face Alignment (OpenCV Affine Transform)
-   Normalizes the face chip to 112×112 based on eye and nose landmarks.
-       │
-       ▼
-3. Vector Embedding (AdaFace TFLite)
-   Converts each face into a 512-dimensional mathematical vector.
-       │
-       ▼
-4. Cosine Similarity Matching
-   Compares the extracted vectors against enrolled student embeddings.
-       │
-       ▼
-[ Attendance Logged in Room SQLite & Synced with Supabase ]
-```
+### Additional Screenshots
+
+- [Session Attendance History](docs/screenshots/teacher_history.png) - Detailed breakdown of students present and absent in each lecture session.
+- [Class Roster & Face Confidence Toggles](docs/screenshots/teacher_roster_toggled.png) - Student roster view with face-match confidence scores and manual override switches.
+- [Live Attendance Camera Viewfinder](docs/screenshots/teacher_take_att.png) - Dual-capture camera interface with real-time face detection framing.
+- [Defaulter Notice Warning Dialog](docs/screenshots/teacher_defaulter_dialog.png) - Automatic calculation of students falling below the mandatory 75% attendance threshold.
+- [Instructor Profile Management](docs/screenshots/teacher_profile.png) - Teacher profile view showing department details, subject assignments, and dark theme support.
+- [Teacher Navigation Drawer](docs/screenshots/teacher_drawer.png) - Side drawer menu providing fast navigation between classes, profile settings, and logout.
 
 ---
 
-## 🔒 Privacy & Biometrics
+## Features
 
-We take student biometric privacy seriously:
-- **Explicit consent required:** Students must agree to our biometric consent dialog before any face data is captured.
-- **No face photos are stored in the cloud.** When a student registers their face, the app converts their face into a 512-number mathematical vector directly on the phone.
-- Only the non-reversible numbers are saved to the Supabase database. You cannot reconstruct a person's photo from these numbers.
-- Attendance photos taken by the teacher are processed on-device and discarded.
-- Students can delete their face profile at any time from Profile settings.
-- Compliant with **India's DPDP Act 2023** and **GDPR** principles.
+### For Instructors
+- Rapid Roll Call: Capture two photos, and the on-device model matches everyone in seconds.
+- Class Join Codes: Create a subject, share a unique 6-character join code, and enrolled students populate the roster automatically.
+- Visual Verification: See detected faces outlined with color-coded bounding boxes and toggle any individual status with a single tap.
+- Session History: Review previous lectures, inspect present and absent tallies, and adjust records if needed.
+- Search and Filtering: Filter rosters by student name, roll number, or attendance status. Includes a dedicated filter for students falling below the 75% attendance threshold.
+- Official Register Export: Export complete attendance registers to CSV formatted for department records, including date-wise matrices, defaulter summaries, and signature rows for the department head.
 
-📄 **[Read our full Privacy Policy](./docs/privacy-policy.md)**
-
----
-
-## 🛠️ Tech Stack
-
-- **Android / UI:** Kotlin, Jetpack Compose, Material 3, Coroutines & Flow
-- **Local Storage:** Room Database (SQLite) + Android WorkManager
-- **Machine Learning:** Google ML Kit (Face Detection) + TensorFlow Lite (AdaFace 512-D embeddings)
-- **Computer Vision:** OpenCV for affine landmark alignment
-- **Cloud Backend:** Supabase (PostgreSQL, Row Level Security, Auth)
-- **Build / Packaging:** Gradle Kotlin DSL, R8 / ProGuard obfuscation, signed release APK, Git LFS
+### For Students
+- Instant Notifications: Receive a status notification showing your attendance mark and updated subject percentage within seconds of session completion.
+- Anti-Spam Alerts: Notifications are delivered once per completed session to keep updates clean and uncluttered.
+- Personal Dashboard: Track overall attendance and individual course percentages against the mandatory 75% limit.
+- Privacy First: Inspect and manage your registered biometric profile directly from your device.
 
 ---
 
-## 🚀 Setting Up the Project Locally
+## How It Works
 
-Want to run the project or contribute? Here's how to get it running in 5 minutes:
+Under the hood, recognition runs locally on the mobile device without sending raw photos to external servers:
 
-### 1. Prerequisites
-- Android Studio Ladybug (2024.2+) or newer
-- JDK 17
-- An Android device or emulator running Android 8.0 (API 26) or higher
-- A free [Supabase](https://supabase.com) account
-
-### 2. Clone the repo
-```bash
-git clone https://github.com/vaavgit/Swiff-Mark.git
-cd Swiff-Mark
-```
-
-### 3. Add your keys
-Open `local.properties` and fill in your SDK path and Supabase keys:
-```properties
-sdk.dir=C\:\\Users\\<YourName>\\AppData\\Local\\Android\\Sdk
-SUPABASE_URL=https://<your-project-id>.supabase.co
-SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-
-### 4. Setup Database
-1. Open your Supabase project's **SQL Editor**.
-2. Run [`supabase/schema.sql`](./supabase/schema.sql) to create the tables.
-3. Run [`supabase/policies.sql`](./supabase/policies.sql) to enable Row Level Security.
-
-### 5. Build & Run
-Hit **Run** (`Shift + F10`) in Android Studio.
+1. Face Detection: Google ML Kit detects all faces present in the high-resolution classroom photo.
+2. Alignment: OpenCV normalizes each detected face chip to standard dimensions using facial landmark geometry.
+3. Embedding Generation: TensorFlow Lite processes the aligned face through a mobile-optimized AdaFace neural network, generating a 512-dimensional numerical vector.
+4. Cosine Matching: Extracted vectors are compared against enrolled student vectors using nearest-neighbor similarity.
+5. Local Storage & Sync: Results are saved immediately to local Room SQLite storage and synced with the cloud database when connectivity is available.
 
 ---
 
-## 📋 Changelog
+## How to Install and Use
 
-### v1.2.2 (Latest)
-- ✅ Enhanced multi-face capture with full-sensor 4:3 high-resolution imaging
-- ✅ Real-time frame sharpness selection (best-of-3 burst with Laplacian blur gate)
-- ✅ OpenCV CLAHE luminance normalisation and edge enhancement on face chips
-- ✅ Adaptive size-aware confidence scoring for distant classroom seating
-- ✅ Quality-weighted embedding fusion across enrollment angles
-- ✅ Screen orientation portrait lock & state retention during sessions
-- ✅ In-app "Delete Face Profile" button in Student Profile (DPDP Act right to erasure)
+Swiff Mark is distributed as a ready-to-use Android application. You do not need to compile or set up development environments to use it.
 
-### v1.2.0
-- ✅ Instant push notifications when attendance is marked (2–8 second delivery)
-- ✅ Anti-spam deduplication — one notification per session, never repeats
-- ✅ Biometric consent dialog before face enrollment (DPDP Act 2023 compliance)
-- ✅ Privacy Policy added (`docs/privacy-policy.md`)
-- ✅ Hardened ProGuard/R8 rules — no more R8 stripping data models
-- ✅ Signed release APK with official keystore
+### Step 1: Download the APK
+Download the latest APK release directly to your Android device from the [Releases page](https://github.com/vaavgit/Swiff-Mark/releases/latest).
 
-### v1.1.4
-- Attendance history deep-dive & manual session corrections
-- Fast search & filters in class rosters
-- 1-tap defaulter (< 75%) notice & CSV export
+### Step 2: Install on Your Phone
+1. Open the downloaded `.apk` file from your browser or file manager.
+2. If prompted by Android, allow installation from this source.
+3. Tap Install and wait for completion.
 
-### v1.1.3
-- Comprehensive UI polish, zero overlaps, gesture nav padding & theme contrast
-
-### v1.1.2
-- Slim arm64-v8a APK (-90 MB) & local Wi-Fi 2-second update server support
-
-### v1.1.1 / v1.1.0 / v1.0.0
-- Initial public releases
+### Step 3: Getting Started
+- Launch Swiff Mark and allow Camera permissions when prompted.
+- For Teachers: Select Teacher, create your profile, add a class, and share the join code with your students.
+- For Students: Select Student, register your account, enter your teacher's class join code, review the biometric consent notice, and complete the quick face enrollment scan.
 
 ---
 
-## 📄 License
+## Tech Stack
 
-This project is licensed under the [MIT License](./LICENSE). Feel free to fork, customize, or contribute!
+- Mobile Platform: Android (API 26+)
+- Programming Language: Kotlin
+- UI Framework: Jetpack Compose with Material 3
+- Asynchronous Processing: Kotlin Coroutines and Flow
+- Machine Learning: Google ML Kit (Face Landmark Detection) and TensorFlow Lite (AdaFace 512-D embeddings)
+- Computer Vision: OpenCV (Affine transformations and quality checks)
+- Local Persistence: Room Database (SQLite) and Android Jetpack DataStore
+- Background Tasks: Android Jetpack WorkManager
+- Cloud Infrastructure: Supabase (PostgreSQL, Row-Level Security, and Auth)
+
+---
+
+## Privacy and Biometrics
+
+Classroom attendance involves sensitive data, so Swiff Mark is designed around strict privacy protections:
+
+- Explicit Biometric Consent: Students are presented with an explicit consent screen before any face enrollment begins, adhering to India's DPDP Act 2023 principles.
+- No Raw Photos in the Cloud: The app never uploads face images or classroom photos to remote servers. Faces are converted directly on the phone into 512-number mathematical vectors.
+- Irreversible Mathematical Vectors: The stored vector embeddings are non-reversible numerical representations. A person's actual photograph cannot be reconstructed from these numbers.
+- Ephemeral Classroom Photos: Photos taken during attendance sessions are processed entirely in memory on the teacher's device and immediately deleted after face extraction.
+- Right to Erasure: Students can delete their face profile and stored biometric vector at any time through the profile screen.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).

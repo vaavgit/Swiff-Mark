@@ -25,9 +25,12 @@ class FaceClassifierHelper(private val context: Context) {
             val modelName = when {
                 assetList.contains("adaface_model.tflite") -> "adaface_model.tflite"
                 assetList.contains("arcface_model.tflite") -> "arcface_model.tflite"
-                else -> "mobilefacenet.tflite"
+                else -> "adaface_model.tflite"
             }
             val modelBuffer = loadModelFile(context, modelName)
+            if (modelBuffer.capacity() < 1024 * 1024) {
+                android.util.Log.e("FaceClassifierHelper", "Model file $modelName is suspiciously small (${modelBuffer.capacity()} bytes). Check Git LFS.")
+            }
             val options = Interpreter.Options().apply {
                 setNumThreads(4)
             }
@@ -70,7 +73,7 @@ class FaceClassifierHelper(private val context: Context) {
         // 1. Resize cropped face to inputSize x inputSize
         val resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, inputSize, inputSize, true)
 
-        // 2. Preprocess into float ByteBuffer normalized: (pixel - 127.5) / 128.0
+        // 2. Preprocess into float ByteBuffer normalized: (pixel - 127.5) / 127.5 into [-1.0, 1.0] with BGR channel order
         val imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4).apply {
             order(ByteOrder.nativeOrder())
         }
@@ -86,9 +89,10 @@ class FaceClassifierHelper(private val context: Context) {
             val g = (pixelValue shr 8 and 0xFF)
             val b = (pixelValue and 0xFF)
 
-            imgData.putFloat((r - 127.5f) / 128.0f)
-            imgData.putFloat((g - 127.5f) / 128.0f)
-            imgData.putFloat((b - 127.5f) / 128.0f)
+            // AdaFace and ArcFace canonical input: BGR format, normalized to [-1.0, 1.0]
+            imgData.putFloat((b - 127.5f) / 127.5f)
+            imgData.putFloat((g - 127.5f) / 127.5f)
+            imgData.putFloat((r - 127.5f) / 127.5f)
         }
 
         // 3. Run inference
