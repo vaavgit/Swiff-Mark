@@ -2,6 +2,7 @@ package com.vaibhav.facialattendancesystem.data
 
 import android.content.Context
 import android.util.Base64
+import android.util.Log
 import com.vaibhav.facialattendancesystem.util.NotificationHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,6 +19,8 @@ import java.net.URLEncoder
  * CloudSyncManager - Optimized REST client for Supabase.
  */
 object CloudSyncManager {
+
+    private const val TAG = "CloudSyncManager"
 
     @Volatile
     private var authToken: String? = null
@@ -62,11 +65,13 @@ object CloudSyncManager {
     }
 
     private fun getHeaders(overrideToken: String? = null): Map<String, String> {
-        val liveToken = overrideToken?.ifBlank { null }
-            ?: sessionManagerRef?.getAccessToken()?.ifBlank { null }
-            ?: authToken?.ifBlank { null }
-            ?: SupabaseConfig.SUPABASE_ANON_KEY
-        if (!overrideToken.isNullOrBlank()) {
+        val liveToken = when {
+            !overrideToken.isNullOrBlank() -> overrideToken
+            !sessionManagerRef?.getAccessToken().isNullOrBlank() -> sessionManagerRef?.getAccessToken()
+            !authToken.isNullOrBlank() -> authToken
+            else -> SupabaseConfig.SUPABASE_ANON_KEY
+        }
+        if (!overrideToken.isNullOrBlank() && overrideToken != SupabaseConfig.SUPABASE_ANON_KEY) {
             authToken = overrideToken
         }
         return mapOf(
@@ -80,8 +85,6 @@ object CloudSyncManager {
     /**
      * Attempts to silently refresh an expired JWT (401) using:
      * 1. Saved refresh_token via GoTrue (/auth/v1/token?grant_type=refresh_token)
-     * 2. Saved login credentials in SessionManager
-     * 3. Cached passwordHash in local Room DB (users table)
      * Returns the new access_token if successful, or null if recovery was not possible.
      */
     @Synchronized
@@ -113,26 +116,44 @@ object CloudSyncManager {
         overrideToken: String? = null
     ): Pair<Int, String> {
         val fullUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}$endpoint"
-        val connection = URL(fullUrl).openConnection() as HttpURLConnection
-        connection.requestMethod = method
-        connection.connectTimeout = 10000
-        connection.readTimeout = 15000
+        var connection: HttpURLConnection? = null
+        return try {
+            val conn = URL(fullUrl).openConnection() as HttpURLConnection
+            connection = conn
+            conn.requestMethod = method
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
 
-        getHeaders(overrideToken).forEach { (k, v) -> connection.setRequestProperty(k, v) }
-        extraHeaders?.forEach { (k, v) -> connection.setRequestProperty(k, v) }
+            getHeaders(overrideToken).forEach { (k, v) -> conn.setRequestProperty(k, v) }
+            extraHeaders?.forEach { (k, v) -> conn.setRequestProperty(k, v) }
 
-        if (body != null && (method == "POST" || method == "PUT" || method == "PATCH")) {
-            connection.doOutput = true
-            OutputStreamWriter(connection.outputStream).use { it.write(body) }
+            if (body != null && (method == "POST" || method == "PUT" || method == "PATCH")) {
+                conn.doOutput = true
+                OutputStreamWriter(conn.outputStream).use { it.write(body) }
+            }
+
+            val statusCode = try {
+                conn.responseCode
+            } catch (e: Exception) {
+                Log.e(TAG, "Connection failed for $method $endpoint", e)
+                503
+            }
+            val stream = if (statusCode in 200..299) conn.inputStream else conn.errorStream
+            val response = stream?.let {
+                BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
+            } ?: ""
+
+            Pair(statusCode, response)
+        } catch (e: Exception) {
+            Log.e(TAG, "HTTP call error for $method $endpoint", e)
+            Pair(503, e.message ?: "Network error")
+        } finally {
+            try {
+                connection?.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error disconnecting HTTP connection", e)
+            }
         }
-
-        val statusCode = try { connection.responseCode } catch (e: Exception) { 503 }
-        val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
-        val response = stream?.let {
-            BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
-        } ?: ""
-
-        return Pair(statusCode, response)
     }
 
     private fun executeRequest(
@@ -145,15 +166,19 @@ object CloudSyncManager {
 
         val (statusCode, response) = performHttpCall(endpoint, method, body, extraHeaders)
 
-        // If 401 Unauthorized (e.g., JWT expired after 1 hour), automatically refresh token / re-authenticate and retry once!
+        // If 401 Unauthorized (e.g., JWT expired after 1 hour), automatically refresh token / re-authenticate and retry once
         if (statusCode == 401 || (statusCode == 403 && response.contains("JWT", ignoreCase = true))) {
             val freshToken = recoverFrom401()
+            if (freshToken.isNullOrBlank()) {
+                // Do NOT fallback to anon key on failed auth recovery; return 401 so caller detects session expiration
+                return Pair(statusCode, response)
+            }
             return performHttpCall(
                 endpoint = endpoint,
                 method = method,
                 body = body,
                 extraHeaders = extraHeaders,
-                overrideToken = freshToken ?: SupabaseConfig.SUPABASE_ANON_KEY
+                overrideToken = freshToken
             )
         }
 
@@ -181,7 +206,7 @@ object CloudSyncManager {
             } else {
                 val teacherJson = JSONObject().apply {
                     put("teacher_id", userId)
-                    put("department", sectionOrDept.ifBlank { "CSE" })
+                    put("department", sectionOrDept.trim())
                     put("designation", rollOrSubject.ifBlank { "Faculty" })
                 }
                 executeRequest("/rest/v1/teachers?on_conflict=teacher_id", "POST", teacherJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
@@ -294,9 +319,10 @@ object CloudSyncManager {
                                 studentId = sId,
                                 embeddingVector = Base64.decode(base64, Base64.DEFAULT),
                                 sourceAngle = angle,
-                                qualityScore = 1.0f
+                                qualityScore = 1.0f,
+                                pipelineVersion = 2
                             ))
-                        } catch (ex: Exception) { ex.printStackTrace() }
+                        } catch (ex: Exception) { Log.e(TAG, "Failed inserting embedding for student $sId", ex) }
                     }
                 }
             }
@@ -323,7 +349,7 @@ object CloudSyncManager {
                 fullName = localUser?.name ?: sess?.userName ?: "Teacher",
                 role = "TEACHER",
                 rollOrSubject = localTeacher?.subject ?: "Faculty",
-                sectionOrDept = localTeacher?.department ?: "CSE"
+                sectionOrDept = localTeacher?.department ?: ""
             )
 
             // Sync teacher's own profile avatar (upload if local exists, else download from cloud)
@@ -734,27 +760,53 @@ object CloudSyncManager {
                 rawClean.replace("-", "")
             }
 
-            var (status, response) = executeRequest("/rest/v1/classes?join_code=eq.$rawClean&select=*", "GET")
-            var array = if (status in 200..299) JSONArray(response) else JSONArray()
-            if (array.length() == 0 && altCode != rawClean) {
-                val retry = executeRequest("/rest/v1/classes?join_code=eq.$altCode&select=*", "GET")
-                status = retry.first
-                response = retry.second
-                array = if (status in 200..299) JSONArray(response) else JSONArray()
+            // 1. Try secure join_class_by_code RPC first
+            val rpcBody = JSONObject().apply { put("p_join_code", rawClean) }.toString()
+            val (rpcStatus, rpcResp) = executeRequest("/rest/v1/rpc/join_class_by_code", "POST", rpcBody)
+            var resolvedClass: Clazz? = null
+            if (rpcStatus in 200..299 && rpcResp.isNotBlank()) {
+                try {
+                    val classObj = JSONObject(rpcResp)
+                    resolvedClass = Clazz(
+                        classId = classObj.getString("class_id"),
+                        teacherId = classObj.optString("teacher_id", ""),
+                        className = classObj.getString("class_name"),
+                        subject = classObj.optString("subject_code", ""),
+                        semester = classObj.optInt("semester", 1),
+                        section = classObj.optString("department", ""),
+                        classCode = rawClean
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing join RPC response", e)
+                }
             }
 
-            val newClazz: Clazz = if (array.length() > 0) {
-                val classObj = array.getJSONObject(0)
-                Clazz(
-                    classId = classObj.getString("class_id"),
-                    teacherId = classObj.optString("teacher_id", ""),
-                    className = classObj.getString("class_name"),
-                    subject = classObj.optString("subject_code", ""),
-                    semester = classObj.optInt("semester", 1),
-                    section = classObj.optString("department", ""),
-                    classCode = classObj.optString("join_code", rawClean)
-                )
-            } else {
+            // 2. Legacy fallback to REST query if RPC not yet deployed
+            if (resolvedClass == null) {
+                var (status, response) = executeRequest("/rest/v1/classes?join_code=eq.$rawClean&select=*", "GET")
+                var array = if (status in 200..299) JSONArray(response) else JSONArray()
+                if (array.length() == 0 && altCode != rawClean) {
+                    val retry = executeRequest("/rest/v1/classes?join_code=eq.$altCode&select=*", "GET")
+                    status = retry.first
+                    response = retry.second
+                    array = if (status in 200..299) JSONArray(response) else JSONArray()
+                }
+
+                if (array.length() > 0) {
+                    val classObj = array.getJSONObject(0)
+                    resolvedClass = Clazz(
+                        classId = classObj.getString("class_id"),
+                        teacherId = classObj.optString("teacher_id", ""),
+                        className = classObj.getString("class_name"),
+                        subject = classObj.optString("subject_code", ""),
+                        semester = classObj.optInt("semester", 1),
+                        section = classObj.optString("department", ""),
+                        classCode = classObj.optString("join_code", rawClean)
+                    )
+                }
+            }
+
+            val newClazz: Clazz = resolvedClass ?: run {
                 // Fallback: check local Room database for matching class code
                 val localClass = db?.clazzDao()?.getClassByCode(rawClean)
                     ?: db?.clazzDao()?.getClassByCode(altCode)
@@ -764,8 +816,7 @@ object CloudSyncManager {
                 } else {
                     return@withContext Pair(
                         false,
-                        if (status == 401 || status == 403) "Authentication error ($status). Please log out and log in again."
-                        else "Invalid Class Code \"$rawClean\". Ask your teacher to open Swiff Mark so their class syncs to the cloud."
+                        "Invalid Class Code \"$rawClean\". Ask your teacher to open Swiff Mark so their class syncs to the cloud."
                     )
                 }
             }
@@ -818,7 +869,7 @@ object CloudSyncManager {
                 Pair(true, "${newClazz.className} (saved locally, will sync)")
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in joinClassByCode", e)
             Pair(false, e.localizedMessage ?: "Join Error")
         }
     }
@@ -841,7 +892,7 @@ object CloudSyncManager {
             if (status in 200..299) Pair(true, "Student approved.")
             else Pair(false, "Cloud update failed, approved locally.")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in approveEnrollment", e)
             Pair(false, e.localizedMessage ?: "Approval error")
         }
     }
@@ -859,7 +910,7 @@ object CloudSyncManager {
             db?.classEnrollmentDao()?.unenrollStudent(classId, studentId)
             Pair(true, "Request rejected.")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in rejectEnrollment", e)
             Pair(false, e.localizedMessage ?: "Rejection error")
         }
     }
@@ -878,7 +929,7 @@ object CloudSyncManager {
             executeRequest("/rest/v1/class_enrollments?class_id=eq.$classId&student_id=eq.$studentId", "DELETE")
             Pair(true, "Left class successfully.")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in leaveClass", e)
             Pair(false, e.localizedMessage ?: "Error leaving class")
         }
     }
@@ -917,7 +968,7 @@ object CloudSyncManager {
 
             Pair(true, "Class deleted successfully.")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in deleteClass", e)
             Pair(false, e.localizedMessage ?: "Error deleting class")
         }
     }
@@ -939,34 +990,46 @@ object CloudSyncManager {
 
     suspend fun uploadStudentProfile(
         student: Student,
-        embeddingsWithAngles: List<Pair<String, FloatArray>>,
-        password: String? = null
+        embeddingsWithAngles: List<Pair<String, FloatArray>>
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             ensureCloudUserProfile(student.studentId, student.email, student.fullName, "STUDENT", student.rollNumber.toString(), student.classSection ?: "")
             val converters = VectorTypeConverters()
+
+            // Delete old cloud embeddings for this student to ensure a fresh set
             executeRequest("/rest/v1/face_embeddings?student_id=eq.${student.studentId}", "DELETE")
-            for ((angle, emb) in embeddingsWithAngles) {
-                val base64 = Base64.encodeToString(converters.floatArrayToByteArray(emb), Base64.NO_WRAP)
-                executeRequest("/rest/v1/face_embeddings", "POST", JSONObject().apply {
-                    put("student_id", student.studentId)
-                    put("embedding_vector_base64", base64)
-                    put("angle_label", angle)
-                }.toString())
+
+            if (embeddingsWithAngles.isNotEmpty()) {
+                val batchArray = JSONArray()
+                for ((angle, emb) in embeddingsWithAngles) {
+                    val base64 = Base64.encodeToString(converters.floatArrayToByteArray(emb), Base64.NO_WRAP)
+                    batchArray.put(JSONObject().apply {
+                        put("student_id", student.studentId)
+                        put("embedding_vector_base64", base64)
+                        put("angle_label", angle)
+                        put("pipeline_version", 2)
+                    })
+                }
+                val (postCode, postResp) = executeRequest("/rest/v1/face_embeddings", "POST", batchArray.toString())
+                if (postCode !in 200..299) {
+                    Log.e(TAG, "Failed to upload student embeddings batch: HTTP $postCode $postResp")
+                    return@withContext false
+                }
             }
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in uploadStudentProfile", e)
+            false
+        }
     }
 
     @JvmName("uploadStudentProfileVectors")
     suspend fun uploadStudentProfile(
         student: Student,
-        embeddings: List<FloatArray>,
-        password: String? = null
+        embeddings: List<FloatArray>
     ): Boolean = uploadStudentProfile(
         student,
-        embeddings.map { "FRONTAL" to it },
-        password
+        embeddings.map { "FRONTAL" to it }
     )
 
     suspend fun uploadNewClass(clazz: Clazz): Boolean = withContext(Dispatchers.IO) {
@@ -988,7 +1051,7 @@ object CloudSyncManager {
             )
             status in 200..299
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in uploadNewClass", e)
             false
         }
     }
@@ -1002,8 +1065,11 @@ object CloudSyncManager {
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
                 db.faceEmbeddingDao().insertEmbedding(FaceEmbedding(
-                    studentId = studentId, embeddingVector = Base64.decode(obj.getString("embedding_vector_base64"), Base64.DEFAULT),
-                    sourceAngle = obj.optString("angle_label", "FRONTAL"), qualityScore = 1.0f
+                    studentId = studentId,
+                    embeddingVector = Base64.decode(obj.getString("embedding_vector_base64"), Base64.DEFAULT),
+                    sourceAngle = obj.optString("angle_label", "FRONTAL"),
+                    qualityScore = 1.0f,
+                    pipelineVersion = obj.optInt("pipeline_version", 2)
                 ))
             }
             true
@@ -1115,7 +1181,7 @@ object CloudSyncManager {
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error in avatar Strategy 1", e)
             }
 
             // Strategy 2: Attempt direct upload to Supabase Storage avatars bucket
@@ -1145,7 +1211,7 @@ object CloudSyncManager {
 
             anySuccess
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in uploadNewClass", e)
             false
         }
     }
@@ -1194,7 +1260,7 @@ object CloudSyncManager {
             // Never fall back to face enrollment photos! Default is blank with First+Last initials (e.g. VV).
             false
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in uploadNewClass", e)
             false
         }
     }
@@ -1236,7 +1302,7 @@ object CloudSyncManager {
             }
         } catch (e: Exception) {
             purgeInProgress = false
-            e.printStackTrace()
+            Log.e(TAG, "Error purging auto face avatars", e)
         }
     }
 
@@ -1278,7 +1344,7 @@ object CloudSyncManager {
 
             true
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error in uploadNewClass", e)
             false
         }
     }
@@ -1325,9 +1391,15 @@ object CloudSyncManager {
         }
     }
 
+    private fun parseVersionComponent(part: String): Int {
+        val clean = part.split("-").firstOrNull() ?: ""
+        val digits = clean.takeWhile { it.isDigit() }
+        return digits.toIntOrNull() ?: 0
+    }
+
     private fun isRemoteVersionNewer(remote: String, local: String): Boolean {
-        val rParts = remote.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
-        val lParts = local.split(".").map { it.filter { ch -> ch.isDigit() }.toIntOrNull() ?: 0 }
+        val rParts = remote.removePrefix("v").removePrefix("V").split(".").map { parseVersionComponent(it) }
+        val lParts = local.removePrefix("v").removePrefix("V").split(".").map { parseVersionComponent(it) }
         val maxLen = kotlin.math.max(rParts.size, lParts.size)
         for (i in 0 until maxLen) {
             val r = rParts.getOrElse(i) { 0 }

@@ -146,11 +146,6 @@ private fun generateClassCode(subject: String): String {
     return "$prefix-$randomDigits"
 }
 
-private fun sha256(input: String): String {
-    val bytes = java.security.MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
-    return bytes.joinToString("") { "%02x".format(it) }
-}
-
 @Composable
 fun AppNavigation(
     recoveryToken: String? = null,
@@ -212,16 +207,6 @@ fun AppNavigation(
 
     LaunchedEffect(Unit) {
         com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
-        if (!sessionManager.isTestDataPurged()) {
-            withContext(Dispatchers.IO) {
-                try {
-                    db.purgeClassesAndAttendanceData(purgeCloud = false)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                sessionManager.setTestDataPurged(true)
-            }
-        }
         val updateInfo = com.vaibhav.facialattendancesystem.data.CloudSyncManager.checkForGitHubUpdate()
         if (updateInfo != null) {
             availableUpdate = updateInfo
@@ -244,7 +229,7 @@ fun AppNavigation(
             composable(Screen.Login.route) {
                 LoginScreen(
                     initialEmail = sessionManager.getSavedEmail(),
-                    initialPassword = sessionManager.getSavedPassword(),
+                    initialPassword = "",
                     initialIsTeacher = sessionManager.getSavedIsTeacher(),
                     initialSaveLogin = sessionManager.isSaveLoginEnabled(),
                     onLoginClick = { email, password, isTeacher, saveLogin ->
@@ -272,26 +257,22 @@ fun AppNavigation(
                                     }
 
                                     // Save credentials if user opted to save login info
-                                    sessionManager.saveLoginCredentials(email, password, isTeacher, saveLogin)
+                                    sessionManager.saveLoginCredentials(email, isTeacher, saveLogin)
 
                                     // Set token on CloudSyncManager so all subsequent cloud REST calls authenticate
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
 
                                     // Check or insert User record in local Room DB keyed by Supabase UUID
                                     var localUser = db.userDao().getUserByEmail(email)
-                                    val passwordHash = sha256(password)
                                     if (localUser == null) {
                                         localUser = User(
                                             userId = authResult.userId,
                                             email = authResult.email,
-                                            passwordHash = passwordHash,
+                                            passwordHash = "",
                                             userType = roleUpper,
                                             name = authResult.fullName
                                         )
                                         db.userDao().insertUser(localUser)
-                                    } else if (localUser.passwordHash != passwordHash) {
-                                        // Update local cached password hash if changed remotely
-                                        db.userDao().insertUser(localUser.copy(passwordHash = passwordHash))
                                     }
 
                                     if (isTeacher) {
@@ -314,7 +295,7 @@ fun AppNavigation(
                                                 fullName = localUser.name,
                                                 role = "TEACHER",
                                                 rollOrSubject = teacher.subject,
-                                                sectionOrDept = teacher.department ?: "CSE"
+                                                sectionOrDept = teacher.department ?: ""
                                             )
                                             com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacher.teacherId, db, sessionManager)
                                         }
@@ -392,53 +373,9 @@ fun AppNavigation(
                                     }
                                 }
                                 is AuthResult.Error -> {
-                                    // Offline fallback: If network failure, check local Room DB
-                                    val isNetworkErr = authResult.message.contains("Network", ignoreCase = true) ||
-                                            authResult.message.contains("Unable to resolve host", ignoreCase = true) ||
-                                            authResult.message.contains("503", ignoreCase = true) ||
-                                            authResult.message.contains("timeout", ignoreCase = true) ||
-                                            authResult.message.contains("connection", ignoreCase = true)
-                                    val localUser = db.userDao().getUserByEmail(email)
-                                    val hashedInput = sha256(password)
-                                    val passwordMatches = localUser != null && localUser.passwordHash == hashedInput
-                                    if (isNetworkErr && passwordMatches && localUser != null) {
-                                        sessionManager.saveLoginCredentials(email, password, isTeacher, saveLogin)
-                                        if (isTeacher) {
-                                            val teacher = db.teacherDao().getTeacherByUserId(localUser.userId)
-                                            withContext(Dispatchers.Main) {
-                                                isLoading = false
-                                                if (teacher != null) {
-                                                    sessionManager.saveSession(teacher.teacherId, localUser.name, "TEACHER", localUser.email)
-                                                    showBanner("Offline mode: Logged in as ${localUser.name}", false)
-                                                    navController.navigate(Screen.TeacherDashboard.createRoute(teacher.teacherId, localUser.name)) {
-                                                        popUpTo(0)
-                                                    }
-                                                } else {
-                                                    authError = "Could not find teacher profile."
-                                                }
-                                            }
-                                        } else {
-                                            val student = db.studentDao().getStudentByUserId(localUser.userId)
-                                            withContext(Dispatchers.Main) {
-                                                isLoading = false
-                                                if (student != null) {
-                                                    sessionManager.saveSession(student.studentId, student.fullName, "STUDENT", localUser.email)
-                                                    showBanner("Offline mode: Logged in as ${student.fullName}", false)
-                                                    if (student.enrollmentStatus == 1) {
-                                                        navController.navigate(Screen.StudentDashboard.createRoute(student.studentId)) { popUpTo(0) }
-                                                    } else {
-                                                        navController.navigate(Screen.StudentEnrollment.createRoute(student.studentId, student.fullName)) { popUpTo(0) }
-                                                    }
-                                                } else {
-                                                    authError = "Could not find student profile."
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        withContext(Dispatchers.Main) {
-                                            isLoading = false
-                                            authError = authResult.message
-                                        }
+                                    withContext(Dispatchers.Main) {
+                                        isLoading = false
+                                        authError = authResult.message
                                     }
                                 }
                                 else -> {
@@ -495,7 +432,7 @@ fun AppNavigation(
                                     }
                                 }
                                 is AuthResult.Success -> {
-                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = sha256(pass), userType = "STUDENT", name = name)
+                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = "", userType = "STUDENT", name = name)
                                     db.userDao().insertUser(newUser)
                                     val student = Student(
                                         studentId = authResult.userId,
@@ -507,7 +444,7 @@ fun AppNavigation(
                                     )
                                     db.studentDao().insertStudent(student)
                                     sessionManager.saveSession(student.studentId, name, "STUDENT", email, authResult.accessToken, authResult.refreshToken)
-                                    sessionManager.saveLoginCredentials(email, pass, false, true)
+                                    sessionManager.saveLoginCredentials(email, false, true)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
                                         userId = student.studentId,
@@ -561,7 +498,7 @@ fun AppNavigation(
                                     }
                                 }
                                 is AuthResult.Success -> {
-                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = sha256(pass), userType = "TEACHER", name = name)
+                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = "", userType = "TEACHER", name = name)
                                     db.userDao().insertUser(newUser)
                                     val teacher = Teacher(
                                         teacherId = authResult.userId,
@@ -571,7 +508,7 @@ fun AppNavigation(
                                     )
                                     db.teacherDao().insertTeacher(teacher)
                                     sessionManager.saveSession(teacher.teacherId, name, "TEACHER", email, authResult.accessToken, authResult.refreshToken)
-                                    sessionManager.saveLoginCredentials(email, pass, true, true)
+                                    sessionManager.saveLoginCredentials(email, true, true)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
                                         userId = teacher.teacherId,
@@ -791,8 +728,7 @@ fun AppNavigation(
                                 val allVectorsWithAngles = capturedSteps.map { it.stepAngle to it.embedding } + listOf("FUSED_AVERAGE" to averagedVector)
                                 com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadStudentProfile(
                                     student = updatedStudent,
-                                    embeddingsWithAngles = allVectorsWithAngles,
-                                    password = user?.passwordHash
+                                    embeddingsWithAngles = allVectorsWithAngles
                                 )
                             }
                         }
@@ -1183,11 +1119,28 @@ fun AppNavigation(
                     },
                     onPurgeData = {
                         scope.launch(Dispatchers.IO) {
-                            val purged = db.purgeClassesAndAttendanceData(purgeCloud = true)
-                            withContext(Dispatchers.Main) {
-                                if (purged) {
-                                    showBanner("✓ Classes & attendance cleared! User profiles & faces are safe.", false)
-                                } else {
+                            try {
+                                val teacherId = savedSession?.userId ?: ""
+                                val classes = db.clazzDao().getClassesListForTeacher(teacherId)
+                                for (c in classes) {
+                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.deleteClass(
+                                        c.classId,
+                                        c.teacherId,
+                                        db,
+                                        sessionManager
+                                    )
+                                }
+                                val purged = db.purgeClassesAndAttendanceData()
+                                withContext(Dispatchers.Main) {
+                                    if (purged) {
+                                        showBanner("Classes & attendance cleared.", false)
+                                    } else {
+                                        showBanner("Error clearing records.", true)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("Navigation", "Error purging records", e)
+                                withContext(Dispatchers.Main) {
                                     showBanner("Error clearing records.", true)
                                 }
                             }
@@ -1400,6 +1353,7 @@ fun AppNavigation(
                         val list = mutableListOf<Pair<Student, List<FloatArray>>>()
                         for (s in students) {
                             val embs = db.faceEmbeddingDao().getEmbeddingsForStudent(s.studentId)
+                                .filter { it.pipelineVersion >= 2 }
                                 .mapNotNull { converters.byteArrayToFloatArray(it.embeddingVector) }
                             if (embs.isNotEmpty()) {
                                 list.add(s to embs)
@@ -1598,15 +1552,21 @@ fun AppNavigation(
                     onToggleAttendanceRecord = { sessionId, studentId, isPresent ->
                         scope.launch(Dispatchers.IO) {
                             val existing = db.attendanceDao().getRecordsForSession(sessionId).find { it.studentId == studentId }
+                            val teacherId = sessionManager.getSession()?.userId ?: "TEACHER"
+                            val now = System.currentTimeMillis()
                             val updatedRecord = existing?.copy(
                                 markedPresent = if (isPresent) 1 else 0,
                                 manualOverride = 1,
+                                manuallyOverriddenAt = now,
+                                overriddenBy = teacherId,
                                 overrideNotes = "Manual override by teacher"
                             ) ?: com.vaibhav.facialattendancesystem.data.AttendanceRecord(
                                 sessionId = sessionId,
                                 studentId = studentId,
                                 markedPresent = if (isPresent) 1 else 0,
                                 manualOverride = 1,
+                                manuallyOverriddenAt = now,
+                                overriddenBy = teacherId,
                                 overrideNotes = "Manual override by teacher"
                             )
                             db.attendanceDao().insertAttendanceRecord(updatedRecord)
@@ -1614,7 +1574,7 @@ fun AppNavigation(
                             withContext(Dispatchers.Main) {
                                 val sName = enrolledStudentsForExport.find { it.studentId == studentId }?.fullName ?: "Student"
                                 val st = if (isPresent) "Present" else "Absent"
-                                showBanner("✓ $sName marked $st", false)
+                                showBanner("$sName marked $st", false)
                             }
                         }
                     },

@@ -110,6 +110,8 @@ data class FaceEmbedding(
     val qualityScore: Float,
     @ColumnInfo(name = "source_photo_path")
     val sourcePhotoPath: String? = null,
+    @ColumnInfo(name = "pipeline_version")
+    val pipelineVersion: Int = 2,
     @ColumnInfo(name = "enrollment_timestamp")
     val enrollmentTimestamp: Long = System.currentTimeMillis()
 )
@@ -256,6 +258,10 @@ data class AttendanceRecord(
     val markedPresent: Int = 0, // 1: present, 0: absent
     @ColumnInfo(name = "manual_override")
     val manualOverride: Int? = 0, // 1: manually overrode
+    @ColumnInfo(name = "manually_overridden_at")
+    val manuallyOverriddenAt: Long? = null,
+    @ColumnInfo(name = "overridden_by")
+    val overriddenBy: String? = null,
     @ColumnInfo(name = "override_notes")
     val overrideNotes: String? = null,
     @ColumnInfo(name = "created_at")

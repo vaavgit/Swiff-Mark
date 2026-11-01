@@ -189,7 +189,7 @@ fun StudentProfileScreen(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "Roll No. $currentRollNo · ${if (currentSection.isNotBlank()) currentSection else "CSE"}",
+                text = if (currentSection.isNotBlank()) "Roll No. $currentRollNo - $currentSection" else "Roll No. $currentRollNo",
                 fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

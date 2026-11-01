@@ -60,7 +60,7 @@ Recognition runs entirely on the teacher's phone in a few seconds, functioning s
 - Official Register Export: Export complete attendance registers to CSV formatted for department records, including date-wise matrices, defaulter summaries, and signature rows for the department head.
 
 ### For Students
-- Instant Notifications: Receive a status notification showing your attendance mark and updated subject percentage within seconds of session completion.
+- Attendance Notifications: Receive notifications showing your attendance status and updated subject percentage following background synchronization.
 - Anti-Spam Alerts: Notifications are delivered once per completed session to keep updates clean and uncluttered.
 - Personal Dashboard: Track overall attendance and individual course percentages against the mandatory 75% limit.
 - Privacy First: Inspect and manage your registered biometric profile directly from your device.
@@ -116,10 +116,10 @@ Download the latest APK release directly to your Android device from the [Releas
 
 Classroom attendance involves sensitive data, so Swiff Mark is designed around strict privacy protections:
 
-- Explicit Biometric Consent: Students are presented with an explicit consent screen before any face enrollment begins, adhering to India's DPDP Act 2023 principles.
+- Explicit Biometric Consent: Students are presented with an explicit informed consent screen prior to face enrollment, adhering to data minimization and purpose limitation principles.
 - No Raw Photos in the Cloud: The app never uploads face images or classroom photos to remote servers. Faces are converted directly on the phone into 512-number mathematical vectors.
-- Irreversible Mathematical Vectors: The stored vector embeddings are non-reversible numerical representations. A person's actual photograph cannot be reconstructed from these numbers.
-- Ephemeral Classroom Photos: Photos taken during attendance sessions are processed entirely in memory on the teacher's device and immediately deleted after face extraction.
+- Mathematical Feature Embeddings: Faces are represented as 512-dimensional numerical feature embeddings. Camera frames are processed on-device and immediately discarded from memory without permanent retention.
+- Ephemeral Classroom Photos: Photos taken during attendance sessions are processed on the teacher's device and deleted immediately after session confirmation or cancellation.
 - Right to Erasure: Students can delete their face profile and stored biometric vector at any time through the profile screen.
 
 ---

@@ -4,9 +4,9 @@ import com.vaibhav.facialattendancesystem.data.Student
 import kotlin.math.sqrt
 
 enum class ConfidenceTier {
-    HIGH,    // >= 0.40 Similarity (Calibrated >= 75% - Auto-Marked High Confidence)
-    MEDIUM,  // 0.30 - 0.40 Similarity (Calibrated 50% - 74% - Teacher Review Needed)
-    LOW      // < 0.30 Similarity (Calibrated < 50% - Unrecognized)
+    HIGH,    // >= 0.40 Similarity (Calibrated >= 85% - Auto-Marked High Confidence)
+    MEDIUM,  // 0.30 - 0.40 Similarity (Calibrated 65% - 84% - Teacher Review Needed)
+    LOW      // < 0.30 Similarity (Calibrated < 65% - Unrecognized)
 }
 
 data class RecognitionCandidate(
@@ -52,29 +52,24 @@ object FaceMath {
                 val fraction = ((similarity - 0.60f) / 0.25f).coerceIn(0f, 1f)
                 (95 + fraction * 4).toInt().coerceIn(95, 99)
             }
-            similarity >= 0.45f -> {
-                // High confidence match: 0.45 .. 0.60 -> 80% .. 94%
-                val fraction = ((similarity - 0.45f) / 0.15f).coerceIn(0f, 1f)
-                (80 + fraction * 14).toInt().coerceIn(80, 94)
+            similarity >= 0.40f -> {
+                // High confidence match: 0.40 .. 0.60 -> 85% .. 94% (Tier: HIGH)
+                val fraction = ((similarity - 0.40f) / 0.20f).coerceIn(0f, 1f)
+                (85 + fraction * 9).toInt().coerceIn(85, 94)
             }
-            similarity >= 0.35f -> {
-                // Medium confidence match: 0.35 .. 0.45 -> 65% .. 79%
-                val fraction = ((similarity - 0.35f) / 0.10f).coerceIn(0f, 1f)
-                (65 + fraction * 14).toInt().coerceIn(65, 79)
+            similarity >= 0.30f -> {
+                // Medium confidence match: 0.30 .. 0.40 -> 65% .. 84% (Tier: MEDIUM)
+                val fraction = ((similarity - 0.30f) / 0.10f).coerceIn(0f, 1f)
+                (65 + fraction * 19).toInt().coerceIn(65, 84)
             }
-            similarity >= 0.28f -> {
-                // Borderline match: 0.28 .. 0.35 -> 45% .. 64%
-                val fraction = ((similarity - 0.28f) / 0.07f).coerceIn(0f, 1f)
-                (45 + fraction * 19).toInt().coerceIn(45, 64)
-            }
-            similarity >= 0.18f -> {
-                // Low similarity / likely different person: 0.18 .. 0.28 -> 20% .. 44%
-                val fraction = ((similarity - 0.18f) / 0.10f).coerceIn(0f, 1f)
-                (20 + fraction * 24).toInt().coerceIn(20, 44)
+            similarity >= 0.20f -> {
+                // Low similarity / Borderline: 0.20 .. 0.30 -> 35% .. 64% (Tier: LOW)
+                val fraction = ((similarity - 0.20f) / 0.10f).coerceIn(0f, 1f)
+                (35 + fraction * 29).toInt().coerceIn(35, 64)
             }
             else -> {
-                // Distinct / unrelated face: < 0.18 -> 0% .. 19%
-                (similarity * 100f).coerceIn(0f, 19f).toInt()
+                // Unrelated / stranger face: < 0.20 -> 0% .. 34% (Tier: LOW)
+                (similarity / 0.20f * 34f).coerceIn(0f, 34f).toInt()
             }
         }
     }
@@ -130,18 +125,12 @@ object FaceMath {
     }
 
     /**
-     * Upgrade 5: Quality-Weighted Score Fusion.
+     * Multi-angle gallery matching for enrolled students.
      *
-     * Instead of max(cosine) across all 6 enrollment embeddings, uses:
-     *   score = Σ(qualityᵢ × cosineᵢ) / Σqualityᵢ
-     *
-     * where qualityᵢ = L2-norm of enrollment embedding (AdaFace paper: feature norm
-     * is the best built-in proxy for image quality — high-norm = high-quality capture).
-     *
-     * This prevents a poor side-angle enrollment frame from dragging down a good
-     * frontal match, which is a common failure mode for Row 2–3 students.
-     *
-     * Falls back to max(cosine) if norms are all equal (uniform-norm model output).
+     * In classroom captures, a query face is compared against each enrolled student's
+     * multi-angle gallery (e.g. frontal, head tilts, smile).
+     * Nearest-neighbor matching (maximum cosine similarity) is used so that off-angle
+     * enrolled poses do not penalize a genuine frontal match.
      */
     fun findCandidatesForFace(
         queryEmbedding: FloatArray,
@@ -152,12 +141,6 @@ object FaceMath {
         for ((student, embeddings) in allStudentsEmbeddings) {
             if (embeddings.isEmpty()) continue
 
-            // Compute per-embedding quality = L2 norm (unnormalized norms from AdaFace)
-            // After L2 normalisation in FaceClassifierHelper, all norms ≈ 1.0.
-            // We use cosine similarity directly and fall back to max-score fusion.
-            // But: during enrollment the raw pre-normalisation norms were discarded.
-            // So we use the cosine score itself as quality proxy (higher sim = more
-            // reliable sample), weighted by position in sorted score list.
             val scoredEmbeddings = embeddings
                 .filter { it.size == queryEmbedding.size }
                 .map { emb ->
@@ -168,11 +151,7 @@ object FaceMath {
 
             if (scoredEmbeddings.isEmpty()) continue
 
-            // Nearest-neighbor multi-angle gallery matching:
-            // A query frame in the classroom is taken from a single pose. The match score
-            // against the student's multi-angle gallery is determined by their closest pose
-            // (maximum cosine similarity). This ensures students who diligently enrolled all 6
-            // angles are not penalized by orthogonal poses dragging down their match score.
+            // Closest pose in student's gallery determines the match score
             val fusedScore = scoredEmbeddings.maxOrNull() ?: 0f
 
             candidates.add(

@@ -22,13 +22,41 @@ class FaceMathTest {
     }
 
     @Test
-    fun testCalibratedConfidencePercent() {
-        assertTrue(FaceMath.calibratedConfidencePercent(0.65f) >= 95)
-        val p45 = FaceMath.calibratedConfidencePercent(0.45f)
-        assertTrue(p45 in 80..94)
+    fun testCalibratedConfidencePercentMatchesConfidenceTiers() {
+        // High Tier: similarity >= 0.40 -> Calibrated >= 85%
+        val p40 = FaceMath.calibratedConfidencePercent(0.40f)
+        assertTrue("0.40 must map to >= 85% (HIGH tier), got $p40", p40 >= 85)
+        assertEquals(ConfidenceTier.HIGH, FaceMath.getConfidenceTier(0.40f))
+
+        val p65 = FaceMath.calibratedConfidencePercent(0.65f)
+        assertTrue("0.65 must map to >= 95%, got $p65", p65 >= 95)
+
+        // Medium Tier: 0.30 <= similarity < 0.40 -> 65%..84%
         val p35 = FaceMath.calibratedConfidencePercent(0.35f)
-        assertTrue(p35 in 65..79)
-        assertTrue(FaceMath.calibratedConfidencePercent(0.10f) < 20)
+        assertTrue("0.35 must map to 65..84% (MEDIUM tier), got $p35", p35 in 65..84)
+        assertEquals(ConfidenceTier.MEDIUM, FaceMath.getConfidenceTier(0.35f))
+
+        val p30 = FaceMath.calibratedConfidencePercent(0.30f)
+        assertTrue("0.30 must map to 65..84% (MEDIUM tier), got $p30", p30 in 65..84)
+        assertEquals(ConfidenceTier.MEDIUM, FaceMath.getConfidenceTier(0.30f))
+
+        // Low Tier: similarity < 0.30 -> < 65%
+        val p29 = FaceMath.calibratedConfidencePercent(0.29f)
+        assertTrue("0.29 must map to < 65% (LOW tier), got $p29", p29 < 65)
+        assertEquals(ConfidenceTier.LOW, FaceMath.getConfidenceTier(0.29f))
+
+        val p10 = FaceMath.calibratedConfidencePercent(0.10f)
+        assertTrue("0.10 must map to < 35%, got $p10", p10 < 35)
+    }
+
+    @Test
+    fun testEyeAnchorLandmarksAreUpright() {
+        // In FaceAligner, canonical coordinates place subject's right eye (viewer's left)
+        // at x ~ 38.29 and subject's left eye (viewer's right) at x ~ 73.53 on the 112x112 chip.
+        // Confirm x_rightEye < x_leftEye so the aligned face is upright and not inverted 180 degrees.
+        val rightEyeX = 38.29f
+        val leftEyeX = 73.53f
+        assertTrue("Viewer left (anatomical right) eye x must be < viewer right eye x", rightEyeX < leftEyeX)
     }
 
     @Test
@@ -45,7 +73,7 @@ class FaceMathTest {
     }
 
     @Test
-    fun testAssignMultiFaceMatches_resolvesCollisionsOptimally() {
+    fun testAssignMultiFaceMatches_resolvesCollisionsGreedily() {
         val face1Candidates = listOf(
             RecognitionCandidate("student_A", 101, "Student Alpha", 0.35f, 0.65f),
             RecognitionCandidate("student_B", 102, "Student Beta", 0.75f, 0.25f)

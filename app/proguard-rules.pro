@@ -2,15 +2,13 @@
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
+-keep class com.vaibhav.facialattendancesystem.data.VectorTypeConverters { *; }
 -dontwarn androidx.room.paging.**
 
-# App Data Models — prevent R8 from stripping Room @Entity / JSON fields
--keep class com.vaibhav.facialattendancesystem.data.** { *; }
--keepclassmembers class com.vaibhav.facialattendancesystem.data.** { *; }
-
-# App Utilities — SessionManager, NotificationHelper, etc.
--keep class com.vaibhav.facialattendancesystem.util.** { *; }
--keepclassmembers class com.vaibhav.facialattendancesystem.util.** { *; }
+# WorkManager Workers
+-keep public class com.vaibhav.facialattendancesystem.util.AttendanceSyncWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
 
 # ML Kit & TensorFlow Lite
 -keep class com.google.mlkit.** { *; }
@@ -56,4 +54,3 @@
 -dontwarn javax.lang.model.type.TypeMirror
 -dontwarn javax.lang.model.type.TypeVisitor
 -dontwarn javax.lang.model.util.SimpleTypeVisitor8
-

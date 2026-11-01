@@ -407,9 +407,9 @@ fun SignUpScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var classSection by remember { mutableStateOf("B1") }
-    var teacherSubject by remember { mutableStateOf("Machine Learning") }
-    var teacherDepartment by remember { mutableStateOf("CSE") }
+    var classSection by remember { mutableStateOf("") }
+    var teacherSubject by remember { mutableStateOf("") }
+    var teacherDepartment by remember { mutableStateOf("") }
     var hasConsented by remember { mutableStateOf(false) }
 
     val isDark = isAppDarkTheme()

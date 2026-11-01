@@ -132,7 +132,7 @@ fun AttendanceHistoryScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             ) {
-                Text("📋 Export Admin Report (College Register)", fontWeight = FontWeight.Bold, color = Color.White)
+                Text("Export Classroom Register", fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
 
@@ -248,7 +248,7 @@ fun AttendanceHistoryScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier.height(36.dp)
                                     ) {
-                                        Text("📄 CSV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                        Text("CSV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                     }
                                 }
                             }
@@ -682,7 +682,7 @@ fun SessionRosterDialog(
                                                 )
                                                 if (isOverridden) {
                                                     Text(
-                                                        text = "✏️ Overridden",
+                                                        text = "Overridden",
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = WarningAmber
@@ -704,7 +704,7 @@ fun SessionRosterDialog(
                                         modifier = Modifier.height(34.dp)
                                     ) {
                                         Text(
-                                            text = if (isPresent) "✓ Present" else "✕ Absent",
+                                            text = if (isPresent) "Present" else "Absent",
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.5.sp
                                         )
@@ -749,6 +749,16 @@ fun shareCsvFile(context: Context, file: java.io.File, title: String) {
     }
 }
 
+private fun escapeCsv(value: String): String {
+    var v = value
+    // Guard against spreadsheet formula injection (=, +, -, @)
+    if (v.startsWith("=") || v.startsWith("+") || v.startsWith("-") || v.startsWith("@")) {
+        v = "'$v"
+    }
+    v = v.replace("\"", "\"\"")
+    return "\"$v\""
+}
+
 fun exportSessionToCsv(
     context: Context,
     session: AttendanceSession,
@@ -757,7 +767,7 @@ fun exportSessionToCsv(
     onResult: ((Boolean, String) -> Unit)? = null
 ) {
     try {
-        val dir = context.getExternalFilesDir(null) ?: context.filesDir
+        val dir = java.io.File(context.getExternalFilesDir(null) ?: context.filesDir, "exports").also { it.mkdirs() }
         val file = java.io.File(dir, "Attendance_${session.sessionId.take(8)}.csv")
         val writer = java.io.FileWriter(file)
 
@@ -771,7 +781,7 @@ fun exportSessionToCsv(
             val finalStatus = if (record.markedPresent == 1) "PRESENT" else "ABSENT"
             val override = if (record.manualOverride == 1) "YES" else "NO"
 
-            writer.write("${student.rollNumber},\"${student.fullName}\",\"${student.email}\",$p1,$p2,$dual,$finalStatus,$override\n")
+            writer.write("${student.rollNumber},${escapeCsv(student.fullName)},${escapeCsv(student.email)},$p1,$p2,$dual,$finalStatus,$override\n")
         }
 
         writer.flush()
@@ -796,8 +806,8 @@ fun exportSessionToCsv(
 }
 
 /**
- * Enhanced College Submission Admin Export.
- * Generates an official session-by-session matrix register formatted for college/university administration.
+ * Enhanced Classroom Submission Admin Export.
+ * Generates an official session-by-session matrix register formatted for classroom and administration records.
  */
 fun exportAdminCollegeAttendanceCsv(
     context: Context,
@@ -815,7 +825,7 @@ fun exportAdminCollegeAttendanceCsv(
     onResult: ((Boolean, String) -> Unit)? = null
 ) {
     try {
-        val dir = context.getExternalFilesDir(null) ?: context.filesDir
+        val dir = java.io.File(context.getExternalFilesDir(null) ?: context.filesDir, "exports").also { it.mkdirs() }
         val sortedSessions = sessions
             .filter { s ->
                 (startDate == null || s.sessionDate >= startDate) &&
@@ -830,7 +840,7 @@ fun exportAdminCollegeAttendanceCsv(
 
         val dateFileStr = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
         val safeName = className.replace("[^a-zA-Z0-9_]".toRegex(), "_")
-        val file = java.io.File(dir, "College_Register_${safeName}_$dateFileStr.csv")
+        val file = java.io.File(dir, "Classroom_Register_${safeName}_$dateFileStr.csv")
         val writer = java.io.FileWriter(file)
 
         val reportGeneratedTimestamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date())
@@ -840,15 +850,15 @@ fun exportAdminCollegeAttendanceCsv(
         val fromStr = fullDateFormat.format(Date(sortedSessions.first().sessionDate))
         val toStr = fullDateFormat.format(Date(sortedSessions.last().sessionDate))
 
-        // 1. Official College Header
+        // 1. Header
         writer.write("========================================================================================\n")
-        writer.write("SWIFF MARK - OFFICIAL COLLEGE ATTENDANCE REGISTER\n")
+        writer.write("SWIFF MARK - CLASSROOM ATTENDANCE REGISTER\n")
         writer.write("========================================================================================\n")
-        writer.write("Class / Course,\"$className\"\n")
-        writer.write("Subject Code / Title,\"${subject.ifBlank { "N/A" }}\"\n")
-        writer.write("Department & Section,\"${section.ifBlank { "A" }}\"\n")
+        writer.write("Class / Course,${escapeCsv(className)}\n")
+        writer.write("Subject Code / Title,${escapeCsv(subject.ifBlank { "N/A" })}\n")
+        writer.write("Department & Section,${escapeCsv(section.ifBlank { "A" })}\n")
         writer.write("Semester,\"Semester $semester\"\n")
-        writer.write("Faculty In-Charge,\"${teacherName.ifBlank { "Faculty" }}\"\n")
+        writer.write("Faculty In-Charge,${escapeCsv(teacherName.ifBlank { "Faculty" })}\n")
         writer.write("Attendance Period,\"$fromStr to $toStr\"\n")
         writer.write("Total Lectures Conducted in Period,${sortedSessions.size}\n")
         writer.write("Total Enrolled Students,${allStudents.size}\n")
@@ -878,9 +888,9 @@ fun exportAdminCollegeAttendanceCsv(
             val row = mutableListOf<String>()
             row.add("${index + 1}")
             row.add("${student.rollNumber}")
-            row.add("\"${student.fullName}\"")
-            row.add("\"${student.classSection ?: section.ifBlank { "A" }}\"")
-            row.add("\"${student.email}\"")
+            row.add(escapeCsv(student.fullName))
+            row.add(escapeCsv(student.classSection ?: section.ifBlank { "A" }))
+            row.add(escapeCsv(student.email))
 
             var attendedCount = 0
             for (s in sortedSessions) {
@@ -898,11 +908,14 @@ fun exportAdminCollegeAttendanceCsv(
             }
 
             totalAttendedSum += attendedCount
-            val pct = if (sortedSessions.isNotEmpty()) ((attendedCount.toFloat() / sortedSessions.size) * 100).toInt() else 0
+            // Consider only sessions on or after student's enrollment date to avoid penalizing late joiners
+            val eligibleSessions = sortedSessions.filter { it.sessionDate >= student.enrollmentDate }
+            val totalEligible = if (eligibleSessions.isNotEmpty()) eligibleSessions.size else sortedSessions.size
+            val pct = if (totalEligible > 0) ((attendedCount.toFloat() / totalEligible) * 100).toInt() else 0
             val isDefaulter = pct < defaulterThresholdPct
 
             row.add("$attendedCount")
-            row.add("${sortedSessions.size}")
+            row.add("$totalEligible")
             row.add("$pct%")
             row.add(if (isDefaulter) "DEFICIENT (SHORTAGE <$defaulterThresholdPct%)" else "ELIGIBLE")
 
@@ -993,7 +1006,7 @@ fun exportDefaultersCsv(
     onResult: ((Boolean, String) -> Unit)? = null
 ) {
     try {
-        val dir = context.getExternalFilesDir(null) ?: context.filesDir
+        val dir = java.io.File(context.getExternalFilesDir(null) ?: context.filesDir, "exports").also { it.mkdirs() }
         val dateFileStr = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
         val safeName = className.replace("[^a-zA-Z0-9_]".toRegex(), "_")
         val file = java.io.File(dir, "Defaulters_${safeName}_$dateFileStr.csv")
@@ -1004,8 +1017,8 @@ fun exportDefaultersCsv(
         writer.write("========================================================================================\n")
         writer.write("SWIFF MARK - ATTENDANCE DEFAULTERS LIST (< 75%)\n")
         writer.write("========================================================================================\n")
-        writer.write("Class / Course,\"$className\"\n")
-        writer.write("Section,\"${section.ifBlank { "A" }}\"\n")
+        writer.write("Class / Course,${escapeCsv(className)}\n")
+        writer.write("Section,${escapeCsv(section.ifBlank { "A" })}\n")
         writer.write("Total Sessions Conducted,$totalSessions\n")
         writer.write("Total Defaulters Found,${defaulters.size}\n")
         writer.write("Report Generated,\"$reportGeneratedTimestamp\"\n")
@@ -1014,7 +1027,7 @@ fun exportDefaultersCsv(
         writer.write("Roll No,Student Name,Email,Classes Attended,Total Classes,Attendance %,Shortage (Needed to Reach 75%),Status\n")
         for ((student, attended, pct) in defaulters.sortedBy { it.second }) {
             val needed = (3 * totalSessions - 4 * attended).coerceAtLeast(1)
-            writer.write("${student.rollNumber},\"${student.fullName}\",\"${student.email}\",$attended,$totalSessions,$pct%,Must attend next $needed classes,DEFAULTER\n")
+            writer.write("${student.rollNumber},${escapeCsv(student.fullName)},${escapeCsv(student.email)},$attended,$totalSessions,$pct%,Must attend next $needed classes,DEFAULTER\n")
         }
 
         writer.write("\n========================================================================================\n")

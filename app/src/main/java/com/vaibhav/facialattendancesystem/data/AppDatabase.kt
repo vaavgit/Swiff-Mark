@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
@@ -19,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AttendanceRecord::class,
         RecognitionLog::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 
@@ -35,7 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun attendanceDao(): AttendanceDao
     abstract fun recognitionLogDao(): RecognitionLogDao
 
-    suspend fun purgeClassesAndAttendanceData(purgeCloud: Boolean = false): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun purgeClassesAndAttendanceData(): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             recognitionLogDao().deleteAllLogs()
             attendanceDao().deleteAllAttendanceRecords()
@@ -44,7 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
             clazzDao().deleteAllClasses()
             true
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("AppDatabase", "Error purging local data", e)
             false
         }
     }
@@ -52,6 +53,14 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE face_embeddings ADD COLUMN pipeline_version INTEGER NOT NULL DEFAULT 2")
+                db.execSQL("ALTER TABLE attendance_records ADD COLUMN manually_overridden_at INTEGER")
+                db.execSQL("ALTER TABLE attendance_records ADD COLUMN overridden_by TEXT")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -66,7 +75,8 @@ abstract class AppDatabase : RoomDatabase() {
                             db.execSQL("PRAGMA foreign_keys = ON;")
                         }
                     })
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_7_8)
+                    .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                 INSTANCE = instance
                 instance

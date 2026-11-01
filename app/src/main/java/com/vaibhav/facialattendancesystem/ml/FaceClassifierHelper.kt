@@ -2,6 +2,7 @@ package com.vaibhav.facialattendancesystem.ml
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -11,49 +12,53 @@ import kotlin.math.sqrt
 
 class FaceClassifierHelper(private val context: Context) {
 
+    private val tag = "FaceClassifierHelper"
     private var interpreter: Interpreter? = null
     private var inputSize: Int = 112
-    private var outputDim: Int = 128
+    private var outputDim: Int = 512
+
+    val isModelLoaded: Boolean
+        get() = interpreter != null
 
     init {
         setupInterpreter()
     }
 
     private fun setupInterpreter() {
+        val modelName = "adaface_model.tflite"
         try {
-            val assetList = context.assets.list("")?.toList() ?: emptyList()
-            val modelName = when {
-                assetList.contains("adaface_model.tflite") -> "adaface_model.tflite"
-                assetList.contains("arcface_model.tflite") -> "arcface_model.tflite"
-                else -> "adaface_model.tflite"
-            }
             val modelBuffer = loadModelFile(context, modelName)
-            if (modelBuffer.capacity() < 1024 * 1024) {
-                android.util.Log.e("FaceClassifierHelper", "Model file $modelName is suspiciously small (${modelBuffer.capacity()} bytes). Check Git LFS.")
+            val modelSize = modelBuffer.capacity()
+            // Model must be binary weights, not a Git LFS pointer text file (< 1 KB) or truncated download
+            if (modelSize < 5 * 1024 * 1024) {
+                val errorMsg = "Model file $modelName is invalid or corrupted ($modelSize bytes). Git LFS binary download required."
+                Log.e(tag, errorMsg)
+                throw IllegalStateException(errorMsg)
             }
+
             val options = Interpreter.Options().apply {
                 setNumThreads(4)
             }
             val tflite = Interpreter(modelBuffer, options)
 
-
             // Dynamically inspect model input and output shapes
-            val inputShape = tflite.getInputTensor(0).shape() // e.g. [1, 112, 112, 3] or [1, 150, 150, 3]
+            val inputShape = tflite.getInputTensor(0).shape() // e.g. [1, 112, 112, 3]
             if (inputShape.size >= 3) {
                 inputSize = inputShape[1]
             }
 
-            val outputShape = tflite.getOutputTensor(0).shape() // e.g. [1, 512] for ArcFace
+            val outputShape = tflite.getOutputTensor(0).shape() // e.g. [1, 512] for AdaFace
             if (outputShape.size >= 2) {
                 outputDim = outputShape[1]
             }
 
             interpreter = tflite
+            Log.i(tag, "Loaded $modelName successfully. Input size: $inputSize, Output dim: $outputDim")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(tag, "Failed to load model $modelName", e)
+            throw IllegalStateException("Failed to load face recognition model $modelName: ${e.message}", e)
         }
     }
-
 
     private fun loadModelFile(context: Context, modelPath: String): ByteBuffer {
         val fileDescriptor = context.assets.openFd(modelPath)
@@ -66,9 +71,10 @@ class FaceClassifierHelper(private val context: Context) {
 
     /**
      * Extracts face embedding vector from cropped face Bitmap.
+     * Normalized BGR format [-1.0, 1.0] matching AdaFace requirements.
      */
     fun getFaceEmbedding(faceBitmap: Bitmap): FloatArray {
-        val tflite = interpreter ?: return FloatArray(outputDim)
+        val tflite = interpreter ?: throw IllegalStateException("Face recognition model is not loaded.")
 
         // 1. Resize cropped face to inputSize x inputSize
         val resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, inputSize, inputSize, true)
@@ -89,7 +95,7 @@ class FaceClassifierHelper(private val context: Context) {
             val g = (pixelValue shr 8 and 0xFF)
             val b = (pixelValue and 0xFF)
 
-            // AdaFace and ArcFace canonical input: BGR format, normalized to [-1.0, 1.0]
+            // AdaFace canonical input: BGR format, normalized to [-1.0, 1.0]
             imgData.putFloat((b - 127.5f) / 127.5f)
             imgData.putFloat((g - 127.5f) / 127.5f)
             imgData.putFloat((r - 127.5f) / 127.5f)
@@ -123,7 +129,7 @@ class FaceClassifierHelper(private val context: Context) {
             interpreter?.close()
             interpreter = null
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(tag, "Error closing interpreter", e)
         }
     }
 }

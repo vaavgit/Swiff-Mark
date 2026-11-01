@@ -99,9 +99,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Check Query Parameters (?access_token=... or ?code=...)
+            // Check Query Parameters (?access_token=...)
             if (token.isNullOrBlank()) {
-                token = uri.getQueryParameter("access_token") ?: uri.getQueryParameter("code")
+                token = uri.getQueryParameter("access_token")
             }
 
             if (!token.isNullOrBlank()) {

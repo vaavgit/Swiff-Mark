@@ -39,6 +39,9 @@ class SessionManager(context: Context) {
             clearSession()
             prefs.edit().putInt(KEY_DATA_VERSION, CURRENT_DATA_VERSION).commit()
         }
+        if (prefs.contains(KEY_SAVED_PASSWORD)) {
+            prefs.edit().remove(KEY_SAVED_PASSWORD).apply()
+        }
     }
 
     fun saveSession(
@@ -136,12 +139,12 @@ class SessionManager(context: Context) {
 
     // ── Save Login Info Credentials ──────────────────────────────────────────
 
-    fun saveLoginCredentials(email: String, password: String, isTeacher: Boolean, save: Boolean) {
+    fun saveLoginCredentials(email: String, isTeacher: Boolean, save: Boolean) {
         val editor = prefs.edit()
         editor.putBoolean(KEY_SAVE_LOGIN_ENABLED, save)
         if (save) {
             editor.putString(KEY_SAVED_EMAIL, email.trim())
-            editor.remove(KEY_SAVED_PASSWORD) // Do NOT store plaintext password in SharedPrefs
+            editor.remove(KEY_SAVED_PASSWORD)
             editor.putBoolean(KEY_SAVED_IS_TEACHER, isTeacher)
         } else {
             editor.remove(KEY_SAVED_EMAIL)
@@ -151,9 +154,12 @@ class SessionManager(context: Context) {
         editor.commit()
     }
 
+    fun saveLoginCredentials(email: String, password: String, isTeacher: Boolean, save: Boolean) {
+        saveLoginCredentials(email, isTeacher, save)
+    }
+
     fun isSaveLoginEnabled(): Boolean = prefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, false)
     fun getSavedEmail(): String = prefs.getString(KEY_SAVED_EMAIL, "") ?: ""
-    fun getSavedPassword(): String = "" // Plaintext password persistence disabled for security
     fun getSavedIsTeacher(): Boolean = prefs.getBoolean(KEY_SAVED_IS_TEACHER, false)
 
     // ── Theme Preference Persistence ──────────────────────────────────────────
