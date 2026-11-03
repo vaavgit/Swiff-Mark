@@ -287,21 +287,26 @@ fun StudentEnrollmentScreen(
                 isProcessingStep = true
 
                 scope.launch(Dispatchers.Default) {
-                    // Upgrade: align eyes to canonical 112x112 grid and apply CLAHE + Unsharp Mask
-                    // so enrollment vectors and classroom attendance vectors match identically
+                    // Natural face crop for clean, high-resolution, unwarped user UI display
+                    val displayCrop = ImageQualityValidator.cropBitmapSafely(currentFrame, faceBox)
+
+                    // Backend-only normalized & enhanced chip for AdaFace embedding generation
                     val alignedFace = if (targetFace != null) {
                         FaceAligner.align(currentFrame, targetFace)
                     } else {
-                        ImageQualityValidator.cropBitmapSafely(currentFrame, faceBox)
+                        displayCrop
                     }
                     val embedding = classifierHelper.getFaceEmbedding(alignedFace)
+                    if (alignedFace != displayCrop && alignedFace != currentFrame) {
+                        try { alignedFace.recycle() } catch (_: Exception) {}
+                    }
                     val score = qualityMetrics?.overallQualityScore ?: 0.8f
 
                     withContext(Dispatchers.Main) {
                         capturedData.add(
                             CapturedStepData(
                                 stepAngle = currentAngle,
-                                bitmap = alignedFace,
+                                bitmap = displayCrop,
                                 faceBox = faceBox,
                                 embedding = embedding,
                                 qualityScore = score

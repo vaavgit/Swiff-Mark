@@ -396,7 +396,7 @@ fun LoginScreen(
 @Composable
 fun SignUpScreen(
     onStudentSignUpClick: (name: String, rollNo: Int, email: String, pass: String, section: String) -> Unit,
-    onTeacherSignUpClick: (name: String, subject: String, department: String, email: String, pass: String) -> Unit,
+    onTeacherSignUpClick: (name: String, department: String, email: String, pass: String) -> Unit,
     onNavigateToLogin: () -> Unit,
     errorMessage: String? = null,
     isLoading: Boolean = false
@@ -408,14 +408,13 @@ fun SignUpScreen(
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var classSection by remember { mutableStateOf("") }
-    var teacherSubject by remember { mutableStateOf("") }
     var teacherDepartment by remember { mutableStateOf("") }
     var hasConsented by remember { mutableStateOf(false) }
 
     val isDark = isAppDarkTheme()
 
     val isStudentValid = fullName.isNotBlank() && email.isNotBlank() && password.length >= 8 && rollNumberStr.isNotBlank() && hasConsented
-    val isTeacherValid = fullName.isNotBlank() && email.isNotBlank() && password.length >= 8 && hasConsented
+    val isTeacherValid = fullName.isNotBlank() && email.isNotBlank() && password.length >= 8 && teacherDepartment.isNotBlank()
     val isFormValid = !isLoading && (if (isTeacherRole) isTeacherValid else isStudentValid)
 
     Box(
@@ -509,63 +508,52 @@ fun SignUpScreen(
                     )
                 }
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PrototypeFieldRow(
-                        value = teacherSubject,
-                        onValueChange = { teacherSubject = it },
-                        label = "Subject",
-                        placeholder = "Machine Learning",
-                        modifier = Modifier.weight(1f)
-                    )
-                    PrototypeFieldRow(
-                        value = teacherDepartment,
-                        onValueChange = { teacherDepartment = it },
-                        label = "Department",
-                        placeholder = "CSE",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                PrototypeFieldRow(
+                    value = teacherDepartment,
+                    onValueChange = { teacherDepartment = it },
+                    label = "Department",
+                    placeholder = "e.g. Computer Science, BCA, AI"
+                )
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Consent checkbox
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { hasConsented = !hasConsented }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                Checkbox(
-                    checked = hasConsented,
-                    onCheckedChange = { hasConsented = it },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = PrimaryCyan,
-                        uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        checkmarkColor = Color.White
-                    ),
-                    modifier = Modifier.size(18.dp).padding(top = 2.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "I consent to my facial data being processed for attendance recognition",
-                    fontSize = 11.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp
-                )
-            }
+            // Consent checkbox (students only - teachers do not enroll facial biometric data)
+            if (!isTeacherRole) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { hasConsented = !hasConsented }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Checkbox(
+                        checked = hasConsented,
+                        onCheckedChange = { hasConsented = it },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = PrimaryCyan,
+                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            checkmarkColor = Color.White
+                        ),
+                        modifier = Modifier.size(18.dp).padding(top = 2.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "I consent to my facial data being processed for attendance recognition",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp
+                    )
+                }
 
-            Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+            }
 
             Text(
                 text = "A verification link will be sent to your email.",
                 fontSize = 11.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                modifier = Modifier.fillMaxWidth().padding(start = 26.dp)
+                modifier = Modifier.fillMaxWidth().padding(start = if (!isTeacherRole) 26.dp else 4.dp)
             )
 
             errorMessage?.let { error ->
@@ -581,7 +569,7 @@ fun SignUpScreen(
             Button(
                 onClick = {
                     if (isTeacherRole) {
-                        onTeacherSignUpClick(fullName.trim(), teacherSubject.trim(), teacherDepartment.trim(), email.trim(), password.trim())
+                        onTeacherSignUpClick(fullName.trim(), teacherDepartment.trim(), email.trim(), password.trim())
                     } else {
                         val rollNo = rollNumberStr.trim().toIntOrNull() ?: 0
                         onStudentSignUpClick(fullName.trim(), rollNo, email.trim(), password.trim(), classSection.trim())

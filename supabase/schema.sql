@@ -115,6 +115,37 @@ ALTER TABLE public.attendance_records ADD COLUMN IF NOT EXISTS manually_overridd
 ALTER TABLE public.attendance_records ADD COLUMN IF NOT EXISTS overridden_by TEXT;
 
 -- ==============================================================================
+-- AUTOMATIC PROFILE CREATION TRIGGER (SECURITY DEFINER)
+-- Synchronizes users registered via Supabase GoTrue Auth to public.profiles
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.profiles (id, email, full_name, role)
+    VALUES (
+        NEW.id::text,
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'),
+        COALESCE(UPPER(NEW.raw_user_meta_data->>'role'), 'STUDENT')
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        email = EXCLUDED.email,
+        full_name = EXCLUDED.full_name,
+        role = EXCLUDED.role;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- ==============================================================================
 -- SECURE JOIN CODE RPC (SECURITY DEFINER)
 -- Prevents exposing join codes via public SELECT queries.
 -- ==============================================================================
@@ -147,26 +178,80 @@ BEGIN
     SELECT class_id, class_name, subject_code, teacher_id, department, semester
     INTO v_class
     FROM public.classes
-    WHERE join_code = UPPER(TRIM(p_join_code)) AND is_active = true;
+    WHERE UPPER(TRIM(join_code)) = UPPER(TRIM(p_join_code)) AND is_active = true;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Invalid class join code';
     END IF;
 
-    -- Insert enrollment safely
+    -- Insert enrollment safely (compatible with UUID or TEXT columns)
     INSERT INTO public.class_enrollments (class_id, student_id, enrollment_verified)
-    VALUES (v_class.class_id, v_uid::text, 1)
+    VALUES (v_class.class_id, v_uid, 1)
     ON CONFLICT DO NOTHING;
 
     RETURN json_build_object(
-        'class_id', v_class.class_id,
+        'class_id', v_class.class_id::text,
         'class_name', v_class.class_name,
         'subject_code', v_class.subject_code,
-        'teacher_id', v_class.teacher_id,
+        'teacher_id', v_class.teacher_id::text,
         'department', v_class.department,
         'semester', v_class.semester
     );
 END;
+$$;
+
+-- ==============================================================================
+-- RLS HELPER FUNCTIONS (SECURITY DEFINER)
+-- Breaks mutual recursion between classes and class_enrollments policies
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.is_student_in_class(p_class_id text, p_student_id text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.class_enrollments
+        WHERE class_id::text = p_class_id AND student_id::text = p_student_id
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_teacher_of_class(p_class_id text, p_teacher_id text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.classes
+        WHERE class_id::text = p_class_id AND teacher_id::text = p_teacher_id
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_teacher_of_student(p_student_id text, p_teacher_id text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.class_enrollments ce
+        JOIN public.classes c ON c.class_id::text = ce.class_id::text
+        WHERE ce.student_id::text = p_student_id AND c.teacher_id::text = p_teacher_id
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_user_role(p_user_id text)
+RETURNS text
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT role FROM public.profiles WHERE id::text = p_user_id;
 $$;
 
 -- ==============================================================================
@@ -195,11 +280,7 @@ DROP POLICY IF EXISTS "Profiles delete policy" ON public.profiles;
 DROP POLICY IF EXISTS "Allow all on profiles" ON public.profiles;
 
 CREATE POLICY "profiles_select" ON public.profiles FOR SELECT TO authenticated
-    USING (id::text = (auth.uid())::text OR EXISTS (
-        SELECT 1 FROM public.class_enrollments ce
-        JOIN public.classes c ON c.class_id::text = ce.class_id::text
-        WHERE ce.student_id::text = public.profiles.id::text AND c.teacher_id::text = (auth.uid())::text
-    ));
+    USING (id::text = (auth.uid())::text OR public.is_teacher_of_student(public.profiles.id::text, (auth.uid())::text));
 CREATE POLICY "profiles_insert" ON public.profiles FOR INSERT TO authenticated
     WITH CHECK (id::text = (auth.uid())::text);
 CREATE POLICY "profiles_update" ON public.profiles FOR UPDATE TO authenticated
@@ -219,11 +300,7 @@ DROP POLICY IF EXISTS "Students delete policy" ON public.students;
 DROP POLICY IF EXISTS "Allow all on students" ON public.students;
 
 CREATE POLICY "students_select" ON public.students FOR SELECT TO authenticated
-    USING (student_id::text = (auth.uid())::text OR EXISTS (
-        SELECT 1 FROM public.class_enrollments ce
-        JOIN public.classes c ON c.class_id::text = ce.class_id::text
-        WHERE ce.student_id::text = public.students.student_id::text AND c.teacher_id::text = (auth.uid())::text
-    ));
+    USING (student_id::text = (auth.uid())::text OR public.is_teacher_of_student(public.students.student_id::text, (auth.uid())::text));
 CREATE POLICY "students_insert" ON public.students FOR INSERT TO authenticated
     WITH CHECK (student_id::text = (auth.uid())::text);
 CREATE POLICY "students_update" ON public.students FOR UPDATE TO authenticated
@@ -244,9 +321,7 @@ DROP POLICY IF EXISTS "Allow all on teachers" ON public.teachers;
 
 CREATE POLICY "teachers_select" ON public.teachers FOR SELECT TO authenticated USING (true);
 CREATE POLICY "teachers_insert" ON public.teachers FOR INSERT TO authenticated
-    WITH CHECK (teacher_id::text = (auth.uid())::text AND EXISTS (
-        SELECT 1 FROM public.profiles WHERE id::text = (auth.uid())::text AND role = 'TEACHER'
-    ));
+    WITH CHECK (teacher_id::text = (auth.uid())::text AND public.get_user_role((auth.uid())::text) = 'TEACHER');
 CREATE POLICY "teachers_update" ON public.teachers FOR UPDATE TO authenticated
     USING (teacher_id::text = (auth.uid())::text) WITH CHECK (teacher_id::text = (auth.uid())::text);
 CREATE POLICY "teachers_delete" ON public.teachers FOR DELETE TO authenticated
@@ -266,16 +341,12 @@ DROP POLICY IF EXISTS "Allow all on classes" ON public.classes;
 CREATE POLICY "classes_select" ON public.classes FOR SELECT TO authenticated
     USING (
         teacher_id::text = (auth.uid())::text
-        OR EXISTS (
-            SELECT 1 FROM public.class_enrollments ce
-            WHERE ce.class_id::text = public.classes.class_id::text AND ce.student_id::text = (auth.uid())::text
-        )
+        OR public.is_student_in_class(public.classes.class_id::text, (auth.uid())::text)
     );
 CREATE POLICY "classes_insert" ON public.classes FOR INSERT TO authenticated
     WITH CHECK (
-        teacher_id::text = (auth.uid())::text AND EXISTS (
-            SELECT 1 FROM public.profiles WHERE id::text = (auth.uid())::text AND role = 'TEACHER'
-        )
+        teacher_id::text = (auth.uid())::text 
+        AND public.get_user_role((auth.uid())::text) = 'TEACHER'
     );
 CREATE POLICY "classes_update" ON public.classes FOR UPDATE TO authenticated
     USING (teacher_id::text = (auth.uid())::text) WITH CHECK (teacher_id::text = (auth.uid())::text);
@@ -292,15 +363,17 @@ DROP POLICY IF EXISTS "Enrollments delete policy" ON public.class_enrollments;
 DROP POLICY IF EXISTS "Allow all on enrollments" ON public.class_enrollments;
 
 CREATE POLICY "enrollments_select" ON public.class_enrollments FOR SELECT TO authenticated
-    USING (student_id::text = (auth.uid())::text OR EXISTS (
-        SELECT 1 FROM public.classes c WHERE c.class_id::text = public.class_enrollments.class_id::text AND c.teacher_id::text = (auth.uid())::text
-    ));
+    USING (
+        student_id::text = (auth.uid())::text 
+        OR public.is_teacher_of_class(public.class_enrollments.class_id::text, (auth.uid())::text)
+    );
 CREATE POLICY "enrollments_insert" ON public.class_enrollments FOR INSERT TO authenticated
     WITH CHECK (student_id::text = (auth.uid())::text);
 CREATE POLICY "enrollments_delete" ON public.class_enrollments FOR DELETE TO authenticated
-    USING (student_id::text = (auth.uid())::text OR EXISTS (
-        SELECT 1 FROM public.classes c WHERE c.class_id::text = public.class_enrollments.class_id::text AND c.teacher_id::text = (auth.uid())::text
-    ));
+    USING (
+        student_id::text = (auth.uid())::text 
+        OR public.is_teacher_of_class(public.class_enrollments.class_id::text, (auth.uid())::text)
+    );
 
 -- 6. Face Embeddings
 DROP POLICY IF EXISTS "embeddings_select" ON public.face_embeddings;
@@ -312,11 +385,10 @@ DROP POLICY IF EXISTS "Embeddings delete policy" ON public.face_embeddings;
 DROP POLICY IF EXISTS "Allow all on embeddings" ON public.face_embeddings;
 
 CREATE POLICY "embeddings_select" ON public.face_embeddings FOR SELECT TO authenticated
-    USING (student_id::text = (auth.uid())::text OR EXISTS (
-        SELECT 1 FROM public.class_enrollments ce
-        JOIN public.classes c ON c.class_id::text = ce.class_id::text
-        WHERE ce.student_id::text = public.face_embeddings.student_id::text AND c.teacher_id::text = (auth.uid())::text
-    ));
+    USING (
+        student_id::text = (auth.uid())::text 
+        OR public.is_teacher_of_student(public.face_embeddings.student_id::text, (auth.uid())::text)
+    );
 CREATE POLICY "embeddings_insert" ON public.face_embeddings FOR INSERT TO authenticated
     WITH CHECK (student_id::text = (auth.uid())::text);
 CREATE POLICY "embeddings_delete" ON public.face_embeddings FOR DELETE TO authenticated

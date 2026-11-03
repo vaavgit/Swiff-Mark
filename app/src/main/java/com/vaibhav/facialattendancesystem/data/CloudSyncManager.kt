@@ -762,7 +762,15 @@ object CloudSyncManager {
 
             // 1. Try secure join_class_by_code RPC first
             val rpcBody = JSONObject().apply { put("p_join_code", rawClean) }.toString()
-            val (rpcStatus, rpcResp) = executeRequest("/rest/v1/rpc/join_class_by_code", "POST", rpcBody)
+            var (rpcStatus, rpcResp) = executeRequest("/rest/v1/rpc/join_class_by_code", "POST", rpcBody)
+            if (rpcStatus !in 200..299 && altCode != rawClean) {
+                val rpcAltBody = JSONObject().apply { put("p_join_code", altCode) }.toString()
+                val retry = executeRequest("/rest/v1/rpc/join_class_by_code", "POST", rpcAltBody)
+                if (retry.first in 200..299) {
+                    rpcStatus = retry.first
+                    rpcResp = retry.second
+                }
+            }
             var resolvedClass: Clazz? = null
             if (rpcStatus in 200..299 && rpcResp.isNotBlank()) {
                 try {

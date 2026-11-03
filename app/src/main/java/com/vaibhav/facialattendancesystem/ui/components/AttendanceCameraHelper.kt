@@ -46,23 +46,15 @@ import java.util.concurrent.atomic.AtomicInteger
 class AttendanceCameraHelper(private val context: Context) {
 
     private val analysisExecutor = Executors.newSingleThreadExecutor()
-    private val captureExecutor  = Executors.newFixedThreadPool(2)
-    private val burstScheduler   = Executors.newSingleThreadScheduledExecutor()
+    private val captureExecutor  = Executors.newSingleThreadExecutor()
 
     private var imageCapture: ImageCapture? = null
     private var camera: Camera? = null
     private var isFrontCamera: Boolean = false
 
-    // Burst capture state: how many frames remain in the current burst window
-    private val burstFramesRemaining = AtomicInteger(0)
-    private var bestBurstBitmap: Bitmap? = null
-    private var bestBurstVariance: Double = -1.0
-    private var burstCallback: ((Bitmap?) -> Unit)? = null
-    private val burstLock = Any()
-
     /**
-     * Invoked on the **main thread** each time the 480p analysis stream delivers
-     * new face detections.  Assign this before calling [bindToLifecycle].
+     * Invoked on the main thread each time the analysis stream delivers
+     * new face detections (if detectorHelper is bound).
      */
     var onFacesUpdated: ((List<DetectedFace>) -> Unit)? = null
 
@@ -173,18 +165,9 @@ class AttendanceCameraHelper(private val context: Context) {
     }
 
     /**
-     * Upgrade 4: Best-of-3 Burst Capture with Laplacian Variance Blur Gate.
-     *
-     * Fires 3 rapid still captures (~250ms apart), computes the Laplacian variance
-     * (sharpness score) for each full-resolution bitmap, and delivers the sharpest
-     * one to [onBitmapReady] on the main thread.
-     *
-     * In classrooms, frame-to-frame sharpness varies ±30–50% due to rolling shutter
-     * and AF hunting. The sharpest of 3 frames has ~35% higher Laplacian variance
-     * than a random single frame, translating directly to higher cosine similarity
-     * from AdaFace on small distant faces.
-     *
-     * [onBitmapReady] is always delivered on the Android **main thread**.
+     * Instant single-shot still capture at native mobile camera speed.
+     * Takes a high-resolution 4:3 still capture immediately on button press,
+     * delivering the result directly to [onBitmapReady] on the Android main thread.
      */
     fun capturePhoto(onBitmapReady: (Bitmap?) -> Unit) {
         val capture = imageCapture
@@ -194,118 +177,26 @@ class AttendanceCameraHelper(private val context: Context) {
             return
         }
 
-        synchronized(burstLock) {
-            burstFramesRemaining.set(3)
-            bestBurstBitmap?.recycle()
-            bestBurstBitmap = null
-            bestBurstVariance = -1.0
-            burstCallback = onBitmapReady
-        }
+        capture.takePicture(
+            captureExecutor,
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    val bitmap = image.toBitmapSafely(isFrontCamera)
+                    image.close()
+                    mainExecutor.execute { onBitmapReady(bitmap) }
+                }
 
-        // Fire 3 captures staggered by 270 ms each via non-blocking scheduler
-        for (shotIndex in 0 until 3) {
-            burstScheduler.schedule({
-                capture.takePicture(
-                    captureExecutor,
-                    object : ImageCapture.OnImageCapturedCallback() {
-                        override fun onCaptureSuccess(image: ImageProxy) {
-                            val bitmap = image.toBitmapSafely(isFrontCamera)
-                            image.close()
-                            if (bitmap != null) {
-                                val variance = computeLaplacianVariance(bitmap)
-                                synchronized(burstLock) {
-                                    if (variance > bestBurstVariance) {
-                                        bestBurstBitmap?.recycle()
-                                        bestBurstBitmap = bitmap
-                                        bestBurstVariance = variance
-                                    } else {
-                                        bitmap.recycle()
-                                    }
-                                }
-                            }
-                            if (burstFramesRemaining.decrementAndGet() == 0) {
-                                val result: Bitmap?
-                                val cb: ((Bitmap?) -> Unit)?
-                                synchronized(burstLock) {
-                                    result = bestBurstBitmap
-                                    bestBurstBitmap = null
-                                    cb = burstCallback
-                                    burstCallback = null
-                                }
-                                mainExecutor.execute { cb?.invoke(result) }
-                            }
-                        }
-
-                        override fun onError(exception: ImageCaptureException) {
-                            exception.printStackTrace()
-                            if (burstFramesRemaining.decrementAndGet() == 0) {
-                                val result: Bitmap?
-                                val cb: ((Bitmap?) -> Unit)?
-                                synchronized(burstLock) {
-                                    result = bestBurstBitmap
-                                    bestBurstBitmap = null
-                                    cb = burstCallback
-                                    burstCallback = null
-                                }
-                                mainExecutor.execute { cb?.invoke(result) }
-                            }
-                        }
-                    }
-                )
-            }, shotIndex * 270L, TimeUnit.MILLISECONDS)
-        }
-    }
-
-    /**
-     * Computes Laplacian variance of a bitmap as a sharpness score.
-     * Higher = sharper. Uses a fast 3x3 Laplacian kernel applied to the
-     * grayscale luminance channel via direct pixel iteration.
-     */
-    private fun computeLaplacianVariance(bitmap: Bitmap): Double {
-        val w = bitmap.width
-        val h = bitmap.height
-        if (w < 3 || h < 3) return 0.0
-
-        // Sub-sample to at most 800px wide to keep this fast on large bitmaps
-        val scale = if (w > 800) 800f / w else 1f
-        val sw = (w * scale).toInt().coerceAtLeast(3)
-        val sh = (h * scale).toInt().coerceAtLeast(3)
-        val small = if (scale < 1f) {
-            Bitmap.createScaledBitmap(bitmap, sw, sh, true)
-        } else bitmap
-
-        val pixels = IntArray(sw * sh)
-        small.getPixels(pixels, 0, sw, 0, 0, sw, sh)
-        if (small != bitmap) small.recycle()
-
-        // Convert to grayscale and apply 3x3 Laplacian: [0,-1,0,-1,4,-1,0,-1,0]
-        var sum = 0.0
-        var sumSq = 0.0
-        var count = 0
-        for (y in 1 until sh - 1) {
-            for (x in 1 until sw - 1) {
-                val center = pixels[y * sw + x]
-                val top    = pixels[(y - 1) * sw + x]
-                val bottom = pixels[(y + 1) * sw + x]
-                val left   = pixels[y * sw + (x - 1)]
-                val right  = pixels[y * sw + (x + 1)]
-                // Grayscale via fast luminance approximation
-                fun luma(p: Int) = ((p shr 16 and 0xFF) * 77 + (p shr 8 and 0xFF) * 150 + (p and 0xFF) * 29) shr 8
-                val lap = (4 * luma(center) - luma(top) - luma(bottom) - luma(left) - luma(right)).toDouble()
-                sum += lap
-                sumSq += lap * lap
-                count++
+                override fun onError(exception: ImageCaptureException) {
+                    exception.printStackTrace()
+                    mainExecutor.execute { onBitmapReady(null) }
+                }
             }
-        }
-        if (count == 0) return 0.0
-        val mean = sum / count
-        return (sumSq / count) - (mean * mean) // variance
+        )
     }
 
     /** Call this from a DisposableEffect's onDispose block. */
     fun release() {
         try { analysisExecutor.shutdown() } catch (_: Exception) {}
         try { captureExecutor.shutdown()  } catch (_: Exception) {}
-        try { burstScheduler.shutdown()   } catch (_: Exception) {}
     }
 }

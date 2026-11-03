@@ -56,11 +56,17 @@ object FaceAligner {
         }
 
         val aligned = try {
-            // Note: ML Kit's FaceLandmark.RIGHT_EYE is the subject's anatomical right eye (viewer's left).
-            // Passing rightEye first to match canonical viewer's left (38.29, 51.69) prevents horizontal mirroring.
+            // Enforce deterministic left-to-right eye ordering in image coordinates:
+            // The eye landmark with smaller X is viewer's left in the image (maps to canonical 38.29, 51.69).
+            // The eye landmark with larger X is viewer's right in the image (maps to canonical 73.53, 51.50).
+            // This mathematically guarantees dx > 0 on both sides, completely preventing 180-degree upside-down
+            // inversions caused by front-camera mirroring or coordinate order differences.
+            val eyeLeftInImage  = if (leftEye.x <= rightEye.x) leftEye else rightEye
+            val eyeRightInImage = if (leftEye.x <= rightEye.x) rightEye else leftEye
+
             val srcPts = floatArrayOf(
-                rightEye.x, rightEye.y,
-                leftEye.x,  leftEye.y
+                eyeLeftInImage.x,  eyeLeftInImage.y,
+                eyeRightInImage.x, eyeRightInImage.y
             )
             val matrix = Matrix()
             // 2 source<->dest point pairs -> similarity transform (no shear/perspective)

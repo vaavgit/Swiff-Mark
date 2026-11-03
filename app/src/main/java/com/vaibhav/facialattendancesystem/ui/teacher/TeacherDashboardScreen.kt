@@ -536,10 +536,15 @@ fun CreateClassDialog(
     onDismiss: () -> Unit,
     onCreate: (name: String, subject: String, semester: Int, section: String) -> Unit
 ) {
-    var className by remember { mutableStateOf("") }
     var subject by remember { mutableStateOf("") }
     var semesterStr by remember { mutableStateOf("1") }
     var section by remember { mutableStateOf("A") }
+
+    val autoClassName = if (section.isNotBlank()) {
+        "${subject.trim()} - Sec ${section.trim()}"
+    } else {
+        subject.trim()
+    }
 
     val previewCode = if (subject.isNotBlank()) {
         val cleanSubj = subject.trim().uppercase().replace(Regex("[^A-Z]"), "").take(2).padEnd(2, 'X')
@@ -554,18 +559,9 @@ fun CreateClassDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
-                    value = className,
-                    onValueChange = { className = it },
-                    label = { Text("Class name (e.g. ML Fundamentals)") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
                     value = subject,
                     onValueChange = { subject = it },
-                    label = { Text("Subject / Dept (e.g. CSE)") },
+                    label = { Text("Subject (e.g. AI ML, DSA, Python)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     shape = RoundedCornerShape(10.dp),
@@ -605,8 +601,8 @@ fun CreateClassDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(className, subject, semesterStr.toIntOrNull() ?: 1, section) },
-                enabled = className.isNotBlank() && subject.isNotBlank(),
+                onClick = { onCreate(autoClassName, subject.trim(), semesterStr.toIntOrNull() ?: 1, section.trim()) },
+                enabled = subject.isNotBlank(),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
             ) { Text("Create & generate code", color = Color.White, fontWeight = FontWeight.Bold) }

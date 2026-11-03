@@ -279,7 +279,7 @@ fun ClassroomAttendanceScreen(
 
         AttendanceCaptureStage.TAKE_PHOTO_1 -> {
             CapturePhotoStepView(
-                title       = "📷 Photo 1 — Start of Class",
+                title       = "Photo 1 - Start of Class",
                 subtitle    = "Point camera at students. Capture room photo.",
                 stepNumber  = 1,
                 isProcessing = isProcessing,
@@ -317,12 +317,12 @@ fun ClassroomAttendanceScreen(
         AttendanceCaptureStage.REVIEW_PHOTO_1 -> {
             StudentRosterReviewView(
                 title        = "Photo 1 Review",
-                photoLabel   = "Start of Class — tap any student to toggle",
+                photoLabel   = "Start of Class - tap any student to toggle",
                 statuses     = photo1Statuses,
                 onToggle     = { idx, isPresent ->
                     photo1Statuses[idx] = photo1Statuses[idx].copy(isMarkedPresent = isPresent)
                 },
-                proceedLabel = "SAVE & CONTINUE →",
+                proceedLabel = "SAVE & CONTINUE ->",
                 onProceed    = {
                     saveDraft(prefs, classId, sessionId, photo1Path, photo1Statuses)
                     stage = AttendanceCaptureStage.SESSION_SAVED
@@ -341,7 +341,7 @@ fun ClassroomAttendanceScreen(
 
         AttendanceCaptureStage.TAKE_PHOTO_2 -> {
             CapturePhotoStepView(
-                title        = "📷 Photo 2 — End of Class",
+                title        = "Photo 2 - End of Class",
                 subtitle     = "Take another classroom photo now that class is ending.",
                 stepNumber   = 2,
                 isProcessing = isProcessing,
@@ -379,12 +379,12 @@ fun ClassroomAttendanceScreen(
         AttendanceCaptureStage.REVIEW_PHOTO_2 -> {
             StudentRosterReviewView(
                 title        = "Photo 2 Review",
-                photoLabel   = "End of Class — tap any student to toggle",
+                photoLabel   = "End of Class - tap any student to toggle",
                 statuses     = photo2Statuses,
                 onToggle     = { idx, isPresent ->
                     photo2Statuses[idx] = photo2Statuses[idx].copy(isMarkedPresent = isPresent)
                 },
-                proceedLabel = "FINALIZE ATTENDANCE →",
+                proceedLabel = "FINALIZE ATTENDANCE ->",
                 onProceed    = { stage = AttendanceCaptureStage.FINAL_SUMMARY }
             )
         }
@@ -452,10 +452,8 @@ fun CapturePhotoStepView(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val cameraHelper   = remember { AttendanceCameraHelper(context) }
-    var inFlight       by remember { mutableStateOf(false) }
-    var liveFaceCount  by remember { mutableStateOf(0) }
-    val previewDetector = remember { FaceDetectorHelper(context, minDetectionConfidence = 0.50f) }
+    val cameraHelper = remember { AttendanceCameraHelper(context) }
+    var inFlight     by remember { mutableStateOf(false) }
 
     val previewView = remember {
         PreviewView(context).apply {
@@ -469,17 +467,14 @@ fun CapturePhotoStepView(
 
     LaunchedEffect(hasCameraPermission) {
         if (hasCameraPermission) {
-            cameraHelper.onFacesUpdated = { faces ->
-                liveFaceCount = faces.size
-            }
-            cameraHelper.bindToLifecycle(lifecycleOwner, previewView, detectorHelper = previewDetector, frontCamera = false)
+            // Bind native 60fps camera preview with zero background analysis overhead for instant shutter response
+            cameraHelper.bindToLifecycle(lifecycleOwner, previewView, detectorHelper = null, frontCamera = false)
         }
     }
     DisposableEffect(hasCameraPermission) {
         onDispose {
             if (hasCameraPermission) {
                 cameraHelper.release()
-                previewDetector.close()
             }
         }
     }
@@ -511,7 +506,7 @@ fun CapturePhotoStepView(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Viewfinder Box with Live Face Counter Overlay
+        // Clean Viewfinder Box with zero box overlays during aiming
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -522,29 +517,6 @@ fun CapturePhotoStepView(
         ) {
             if (hasCameraPermission) {
                 AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
-
-                // Live Faces in View Pill (Top Center)
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 12.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color.Black.copy(alpha = 0.70f))
-                        .border(
-                            1.dp,
-                            if (liveFaceCount > 0) SuccessGreen else Color.White.copy(alpha = 0.25f),
-                            RoundedCornerShape(20.dp)
-                        )
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = if (liveFaceCount > 0) "👥 $liveFaceCount Face${if (liveFaceCount > 1) "s" else ""} in Frame"
-                               else "👥 Point camera at students",
-                        color = if (liveFaceCount > 0) SuccessGreen else Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp
-                    )
-                }
             } else {
                 CameraPermissionFallbackCard(
                     title = "Camera Access Required",
@@ -582,15 +554,10 @@ fun CapturePhotoStepView(
                 colors   = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
                 modifier = Modifier.weight(2f).height(52.dp)
             ) {
-                if (isProcessing) {
+                if (isProcessing || inFlight) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.5.dp)
-                        Text("Analysing...", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 14.sp)
-                    }
-                } else if (inFlight) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Color.White, strokeWidth = 2.5.dp)
-                        Text("Picking best frame…", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                        Text("Analyzing classroom faces...", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
                     }
                 } else {
                     Text("CAPTURE PHOTO", fontWeight = FontWeight.Bold, color = Color.White)
@@ -627,15 +594,15 @@ fun StudentRosterReviewView(
 
         // Quick stats row
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AttChip("✓ Present",   presentCount,           SuccessGreen)
-            AttChip("✕ Absent",    statuses.size - presentCount, ErrorRose)
-            AttChip("Total",       statuses.size,           PrimaryCyan)
+            AttChip("[P] Present", presentCount, SuccessGreen)
+            AttChip("[A] Absent",  statuses.size - presentCount, ErrorRose)
+            AttChip("Total",       statuses.size, PrimaryCyan)
         }
 
         if (uncertainCount > 0) {
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                "⚠ $uncertainCount medium-confidence matches — verify below",
+                "$uncertainCount medium-confidence matches - verify below",
                 fontSize = 12.sp, color = WarningAmber, fontWeight = FontWeight.SemiBold
             )
         }

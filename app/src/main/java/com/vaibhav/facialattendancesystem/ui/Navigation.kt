@@ -475,7 +475,7 @@ fun AppNavigation(
                             }
                         }
                     },
-                    onTeacherSignUpClick = { name, subject, department, email, pass ->
+                    onTeacherSignUpClick = { name, department, email, pass ->
                         isLoading = true
                         authError = null
                         scope.launch(Dispatchers.IO) {
@@ -484,7 +484,7 @@ fun AppNavigation(
                                 password = pass,
                                 fullName = name,
                                 role = "TEACHER",
-                                rollOrSubject = subject,
+                                rollOrSubject = "Faculty",
                                 sectionOrDept = department
                             )
                             when (authResult) {
@@ -503,7 +503,7 @@ fun AppNavigation(
                                     val teacher = Teacher(
                                         teacherId = authResult.userId,
                                         userId = authResult.userId,
-                                        subject = subject,
+                                        subject = "",
                                         department = department
                                     )
                                     db.teacherDao().insertTeacher(teacher)
@@ -515,7 +515,7 @@ fun AppNavigation(
                                         email = email,
                                         fullName = name,
                                         role = "TEACHER",
-                                        rollOrSubject = subject,
+                                        rollOrSubject = "Faculty",
                                         sectionOrDept = department
                                     )
 
