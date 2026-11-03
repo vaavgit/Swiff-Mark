@@ -114,6 +114,9 @@ interface FaceEmbeddingDao {
 
     @Query("DELETE FROM face_embeddings WHERE student_id = :studentId")
     fun deleteEmbeddingsForStudent(studentId: String): Int
+
+    @Query("DELETE FROM face_embeddings")
+    fun deleteAllEmbeddings(): Int
 }
 
 @Dao

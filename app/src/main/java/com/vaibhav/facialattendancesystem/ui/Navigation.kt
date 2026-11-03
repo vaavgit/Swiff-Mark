@@ -168,6 +168,21 @@ fun AppNavigation(
         com.vaibhav.facialattendancesystem.data.CloudSyncManager.initSessionManager(sessionManager, db, context)
     }
 
+    val handleLogout: () -> Unit = {
+        scope.launch(Dispatchers.IO) {
+            try {
+                db.faceEmbeddingDao().deleteAllEmbeddings()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        sessionManager.clearSession()
+        com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(null)
+        navController.navigate(Screen.Login.route) {
+            popUpTo(0)
+        }
+    }
+
     var isDarkTheme by remember { mutableStateOf(sessionManager.isDarkTheme()) }
     var authError by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -848,13 +863,7 @@ fun AppNavigation(
                         onOpenProfile = {
                             navController.navigate(Screen.StudentProfile.createRoute(currentStudent.studentId))
                         },
-                        onLogout = {
-                            sessionManager.clearSession()
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(null)
-                            navController.navigate(Screen.Login.route) {
-                                popUpTo(0)
-                            }
-                        }
+                        onLogout = handleLogout
                     )
                 }
             }
@@ -920,11 +929,7 @@ fun AppNavigation(
                                 }
                             }
                         },
-                        onLogout = {
-                            sessionManager.clearSession()
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(null)
-                            navController.navigate(Screen.Login.route) { popUpTo(0) }
-                        },
+                        onLogout = handleLogout,
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -1064,13 +1069,7 @@ fun AppNavigation(
                             }
                         }
                     },
-                    onLogout = {
-                        sessionManager.clearSession()
-                        com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(null)
-                        navController.navigate(Screen.Login.route) {
-                            popUpTo(0)
-                        }
-                    }
+                    onLogout = handleLogout
                 )
             }
 
@@ -1152,11 +1151,7 @@ fun AppNavigation(
                             }
                         }
                     },
-                    onLogout = {
-                        sessionManager.clearSession()
-                        com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(null)
-                        navController.navigate(Screen.Login.route) { popUpTo(0) }
-                    },
+                    onLogout = handleLogout,
                     onBack = { navController.popBackStack() }
                 )
             }

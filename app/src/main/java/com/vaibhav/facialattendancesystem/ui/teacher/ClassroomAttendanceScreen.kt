@@ -141,8 +141,8 @@ private fun buildStudentStatuses(
             detectedInPhoto = detected,
             confidenceTier  = tier,
             matchConfidence = conf,
-            // HIGH/MEDIUM auto-present, or teacher manually confirmed assignment
-            isMarkedPresent = isManual || (detected && (tier == ConfidenceTier.HIGH || tier == ConfidenceTier.MEDIUM))
+            // Only HIGH confidence is auto-marked present; MEDIUM confidence requires teacher review
+            isMarkedPresent = isManual || (detected && tier == ConfidenceTier.HIGH)
         )
     }
 }
@@ -203,6 +203,38 @@ fun ClassroomAttendanceScreen(
     val detectorHelper   = remember { FaceDetectorHelper(context, minDetectionConfidence = 0.55f) }
     val classifierHelper = remember { FaceClassifierHelper(context) }
     DisposableEffect(Unit) { onDispose { detectorHelper.close(); classifierHelper.close() } }
+
+    if (!classifierHelper.isModelLoaded) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "Model Not Loaded",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ErrorRose
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = classifierHelper.loadErrorMessage
+                        ?: "Face recognition neural weights missing. Please verify asset file adaface_model.tflite.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                androidx.compose.material3.Button(onClick = onCancel) {
+                    Text("Go Back")
+                }
+            }
+        }
+        return
+    }
 
     var stage       by rememberSaveable { mutableStateOf(AttendanceCaptureStage.TAKE_PHOTO_1) }
     var isProcessing by remember { mutableStateOf(false) }
@@ -283,13 +315,18 @@ fun ClassroomAttendanceScreen(
                 subtitle    = "Point camera at students. Capture room photo.",
                 stepNumber  = 1,
                 isProcessing = isProcessing,
-                onCancel    = onCancel,
+                onCancel    = {
+                    listOf(photo1Path, photo2Path).forEach { p ->
+                        if (p.isNotBlank()) { try { java.io.File(p).delete() } catch (_: Exception) {} }
+                    }
+                    onCancel()
+                },
                 onCaptureBitmap = { bitmap ->
                     isProcessing = true
                     scope.launch(Dispatchers.IO) {
-                        // Save bitmap to disk so photo1Path refers to a real file
+                        // Save bitmap to temporary app cache so photo1Path refers to a real file
                         val savedPath = try {
-                            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+                            val dir = java.io.File(context.cacheDir, "attendance_photos").apply { mkdirs() }
                             val file = java.io.File(dir, "photo_1_${System.currentTimeMillis()}.jpg")
                             java.io.FileOutputStream(file).use { out ->
                                 bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
@@ -349,9 +386,9 @@ fun ClassroomAttendanceScreen(
                 onCaptureBitmap = { bitmap ->
                     isProcessing = true
                     scope.launch(Dispatchers.IO) {
-                        // Save bitmap to disk so photo2Path refers to a real file
+                        // Save bitmap to temporary app cache so photo2Path refers to a real file
                         val savedPath = try {
-                            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+                            val dir = java.io.File(context.cacheDir, "attendance_photos").apply { mkdirs() }
                             val file = java.io.File(dir, "photo_2_${System.currentTimeMillis()}.jpg")
                             java.io.FileOutputStream(file).use { out ->
                                 bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
@@ -397,6 +434,10 @@ fun ClassroomAttendanceScreen(
                 photo2Statuses   = photo2Statuses,
                 onConfirm        = { finalPresentIds ->
                     clearDraft(prefs, classId)
+                    // Auto-cleanup raw classroom capture photos to preserve privacy and storage
+                    listOf(photo1Path, photo2Path).forEach { p ->
+                        if (p.isNotBlank()) { try { java.io.File(p).delete() } catch (_: Exception) {} }
+                    }
                     onConfirmAttendance(
                         photo1Path,
                         photo2Path,
@@ -865,7 +906,7 @@ fun FinalSummaryView(
             if (photo1Only.isNotEmpty()) {
                 item {
                     Spacer(modifier = Modifier.height(4.dp))
-                    FinalSectionHeader("⚠ Seen in Photo 1 only — Left Early? (${photo1Only.size})", WarningAmber)
+                    FinalSectionHeader("Seen in Photo 1 only - Left Early? (${photo1Only.size})", WarningAmber)
                     Text(
                         "Toggle each student: Present (left early) or Absent",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -878,7 +919,7 @@ fun FinalSummaryView(
                     EarlyLeaveRow(
                         student  = student,
                         isPresent = present,
-                        label    = if (present) "Left Early — Marked Present" else "Left Early — Marked Absent",
+                        label    = if (present) "Left Early - Marked Present" else "Left Early - Marked Absent",
                         onToggle = { earlyLeaveMap[sid] = !present }
                     )
                 }
@@ -888,7 +929,7 @@ fun FinalSummaryView(
             if (photo2Only.isNotEmpty()) {
                 item {
                     Spacer(modifier = Modifier.height(4.dp))
-                    FinalSectionHeader("⚠ Seen in Photo 2 only — Late Arrival? (${photo2Only.size})", WarningAmber)
+                    FinalSectionHeader("Seen in Photo 2 only - Late Arrival? (${photo2Only.size})", WarningAmber)
                     Text(
                         "Toggle each student: Present (arrived late) or Absent",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -897,11 +938,11 @@ fun FinalSummaryView(
                 }
                 items(photo2Only.toList()) { sid ->
                     val student = enrolledStudents.find { it.studentId == sid } ?: return@items
-                    val present = lateArriveMap[sid] ?: true
+                    val present = lateArriveMap[sid] ?: false
                     EarlyLeaveRow(
                         student  = student,
                         isPresent = present,
-                        label    = if (present) "Late Arrival — Marked Present" else "Late Arrival — Marked Absent",
+                        label    = if (present) "Late Arrival - Marked Present" else "Late Arrival - Marked Absent",
                         onToggle = { lateArriveMap[sid] = !present }
                     )
                 }

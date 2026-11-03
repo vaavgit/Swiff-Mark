@@ -852,17 +852,24 @@ object CloudSyncManager {
                 )
             }
 
-            // Insert into Supabase public.class_enrollments (schema has class_id, student_id)
-            val enrollmentJson = JSONObject().apply {
-                put("class_id", newClazz.classId)
-                put("student_id", studentId)
+            // If join_class_by_code RPC succeeded, enrollment is already safely committed by the backend.
+            // Otherwise, attempt direct insert for legacy fallback.
+            val isEnrolledViaRpc = rpcStatus in 200..299
+            var enrollStatus = if (isEnrolledViaRpc) 200 else 0
+
+            if (!isEnrolledViaRpc) {
+                val enrollmentJson = JSONObject().apply {
+                    put("class_id", newClazz.classId)
+                    put("student_id", studentId)
+                }
+                val (status, _) = executeRequest(
+                    "/rest/v1/class_enrollments?on_conflict=class_id,student_id",
+                    "POST",
+                    enrollmentJson.toString(),
+                    mapOf("Prefer" to "resolution=merge-duplicates")
+                )
+                enrollStatus = status
             }
-            val (enrollStatus, _) = executeRequest(
-                "/rest/v1/class_enrollments?on_conflict=class_id,student_id",
-                "POST",
-                enrollmentJson.toString(),
-                mapOf("Prefer" to "resolution=merge-duplicates")
-            )
 
             // Save class & enrollment locally as verified (1) so student and teacher both see it immediately
             db?.clazzDao()?.insertClass(newClazz)

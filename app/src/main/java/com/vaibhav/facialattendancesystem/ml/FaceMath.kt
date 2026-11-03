@@ -99,6 +99,14 @@ object FaceMath {
     }
 
     /**
+     * Calculates cosine similarity between two float vectors.
+     * Range: -1.0 to 1.0 (1.0 = identical)
+     */
+    fun cosineSimilarity(vectorA: FloatArray, vectorB: FloatArray): Float {
+        return (1.0f - cosineDistance(vectorA, vectorB)).coerceIn(-1.0f, 1.0f)
+    }
+
+    /**
      * Upgrade 3: Adaptive Confidence Tier with face-size awareness.
      *
      * A 30-pixel face upscaled to 112×112 cannot produce cosine similarities ≥ 0.40
@@ -282,7 +290,25 @@ object FaceMath {
             if (!assignedFaces.contains(pair.faceIndex) && !assignedStudents.contains(pair.candidate.studentId)) {
                 assignedFaces.add(pair.faceIndex)
                 assignedStudents.add(pair.candidate.studentId)
-                assignmentResult[pair.faceIndex] = pair.candidate
+
+                // Ambiguity check: if the second-best student match has cosine distance within 0.04
+                // of the top match (lookalike/sibling margin), downgrade tier to MEDIUM to require teacher review
+                val faceCandidates = allFaceCandidates[pair.faceIndex] ?: emptyList()
+                val secondBest = faceCandidates.filter { it.studentId != pair.candidate.studentId }
+                    .maxByOrNull { it.confidenceScore }
+                val isAmbiguous = secondBest != null && (pair.candidate.confidenceScore - secondBest.confidenceScore < 0.04f)
+
+                val assignedCandidate = if (isAmbiguous) {
+                    val dimmedScore = (pair.candidate.confidenceScore * 0.75f).coerceAtMost(0.35f)
+                    pair.candidate.copy(
+                        confidenceScore = dimmedScore,
+                        distance = 1.0f - dimmedScore,
+                        calibratedPercent = FaceMath.calibratedConfidencePercent(dimmedScore)
+                    )
+                } else {
+                    pair.candidate
+                }
+                assignmentResult[pair.faceIndex] = assignedCandidate
             }
         }
 

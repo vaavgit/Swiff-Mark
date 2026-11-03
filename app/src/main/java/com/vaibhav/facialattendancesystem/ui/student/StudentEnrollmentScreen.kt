@@ -95,6 +95,34 @@ fun StudentEnrollmentScreen(
         }
     }
 
+    if (!classifierHelper.isModelLoaded) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "Model Not Loaded",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ErrorRose
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = classifierHelper.loadErrorMessage
+                        ?: "Face recognition neural weights missing. Please verify asset file adaface_model.tflite.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+        return
+    }
+
     val steps = listOf(
         "STRAIGHT" to "Look Straight at Camera",
         "UP" to "Tilt Head Up Slightly (30°)",
@@ -272,7 +300,8 @@ fun StudentEnrollmentScreen(
             (primaryFace.boundingBox.width() >= frame.width * 0.20f) &&
             (primaryFace.boundingBox.centerX() in (frame.width * 0.20f)..(frame.width * 0.80f)) &&
             (primaryFace.boundingBox.centerY() in (frame.height * 0.15f)..(frame.height * 0.85f))
-        val isReadyToCapture = hasValidFace && !isProcessingStep
+        val (isPoseValid, posePrompt) = checkStepPose(currentAngle, primaryFace)
+        val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
 
         Button(
             onClick = {
@@ -341,6 +370,13 @@ fun StudentEnrollmentScreen(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else if (!isPoseValid) {
+                Text(
+                    text = posePrompt,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WarningAmber
+                )
             } else {
                 Text(
                     text = "CAPTURE PHOTO (${currentStepIndex + 1}/${steps.size})",
@@ -353,6 +389,59 @@ fun StudentEnrollmentScreen(
     }
 }
 
+private fun checkStepPose(angle: String, face: DetectedFace?): Pair<Boolean, String> {
+    if (face == null) return Pair(false, "ALIGN FACE IN OVAL")
+    val pitch = face.headEulerAngleX
+    val yaw = face.headEulerAngleY
+    val smile = face.smilingProbability ?: 0f
+
+    return when (angle) {
+        "STRAIGHT" -> {
+            if (kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f) {
+                Pair(false, "LOOK DIRECTLY AT CAMERA")
+            } else {
+                Pair(true, "PERFECT - HOLD STILL")
+            }
+        }
+        "UP" -> {
+            if (pitch < 7f) {
+                Pair(false, "TILT HEAD UP SLIGHTLY")
+            } else {
+                Pair(true, "UPWARD POSE CONFIRMED")
+            }
+        }
+        "DOWN" -> {
+            if (pitch > -7f) {
+                Pair(false, "TILT HEAD DOWN SLIGHTLY")
+            } else {
+                Pair(true, "DOWNWARD POSE CONFIRMED")
+            }
+        }
+        "LEFT" -> {
+            if (kotlin.math.abs(yaw) < 9f) {
+                Pair(false, "TURN HEAD TO THE LEFT")
+            } else {
+                Pair(true, "LEFT POSE CONFIRMED")
+            }
+        }
+        "RIGHT" -> {
+            if (kotlin.math.abs(yaw) < 9f) {
+                Pair(false, "TURN HEAD TO THE RIGHT")
+            } else {
+                Pair(true, "RIGHT POSE CONFIRMED")
+            }
+        }
+        "SMILE" -> {
+            if (smile < 0.45f) {
+                Pair(false, "SMILE NATURALLY (LIVENESS)")
+            } else {
+                Pair(true, "LIVENESS CONFIRMED")
+            }
+        }
+        else -> Pair(true, "READY")
+    }
+}
+
 @Composable
 fun EnrollmentSummaryView(
     studentName: String,
@@ -360,6 +449,20 @@ fun EnrollmentSummaryView(
     onConfirm: () -> Unit
 ) {
     var isSaving by remember { mutableStateOf(false) }
+
+    val straightStep = capturedSteps.find { it.stepAngle == "STRAIGHT" } ?: capturedSteps.firstOrNull()
+    val hasInconsistentFace = remember(capturedSteps) {
+        if (straightStep == null) false
+        else {
+            capturedSteps.any { step ->
+                if (step.stepAngle == "STRAIGHT") false
+                else {
+                    val sim = FaceMath.cosineSimilarity(straightStep.embedding, step.embedding)
+                    sim < 0.25f
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -374,13 +477,13 @@ fun EnrollmentSummaryView(
 
         Surface(
             shape = RoundedCornerShape(999.dp),
-            color = SuccessGreen.copy(alpha = 0.15f)
+            color = if (hasInconsistentFace) ErrorRose.copy(alpha = 0.15f) else SuccessGreen.copy(alpha = 0.15f)
         ) {
             Text(
-                text = "✅  Face Profile Complete!",
+                text = if (hasInconsistentFace) "Face Validation Failed" else "Face Profile Complete",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                color = SuccessGreen,
+                color = if (hasInconsistentFace) ErrorRose else SuccessGreen,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
             )
         }
@@ -388,11 +491,29 @@ fun EnrollmentSummaryView(
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "6 angles captured for $studentName",
+            text = if (hasInconsistentFace) "Inconsistent identity detected across capture angles" else "6 angles captured for $studentName",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 20.dp)
+            modifier = Modifier.padding(bottom = 16.dp)
         )
+
+        if (hasInconsistentFace) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = ErrorRose.copy(alpha = 0.12f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+            ) {
+                Text(
+                    text = "Pairwise biometric check failed: Captures appear to be from different people or altered photos. Please discard and re-enroll.",
+                    color = ErrorRose,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(10.dp)
+                )
+            }
+        }
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
@@ -434,12 +555,12 @@ fun EnrollmentSummaryView(
 
         Button(
             onClick = {
-                if (!isSaving) {
+                if (!isSaving && !hasInconsistentFace) {
                     isSaving = true
                     onConfirm()
                 }
             },
-            enabled = !isSaving,
+            enabled = !isSaving && !hasInconsistentFace,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = PrimaryCyan,

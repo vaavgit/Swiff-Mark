@@ -22,6 +22,9 @@ data class DetectedFace(
     val boundingBox: RectF,
     val confidence: Float,
     val smilingProbability: Float? = null,
+    val headEulerAngleX: Float = 0f,
+    val headEulerAngleY: Float = 0f,
+    val headEulerAngleZ: Float = 0f,
     val landmarks: Map<Int, PointF> = emptyMap()
 )
 
@@ -98,6 +101,9 @@ class FaceDetectorHelper(
                             boundingBox = rectF,
                             confidence = 0.95f,
                             smilingProbability = face.smilingProbability,
+                            headEulerAngleX = face.headEulerAngleX,
+                            headEulerAngleY = face.headEulerAngleY,
+                            headEulerAngleZ = face.headEulerAngleZ,
                             landmarks = landmarkMap
                         )
                     )

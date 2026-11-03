@@ -409,12 +409,15 @@ fun SignUpScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var classSection by remember { mutableStateOf("") }
     var teacherDepartment by remember { mutableStateOf("") }
+    var facultyPasskey by remember { mutableStateOf("") }
     var hasConsented by remember { mutableStateOf(false) }
 
     val isDark = isAppDarkTheme()
 
-    val isStudentValid = fullName.isNotBlank() && email.isNotBlank() && password.length >= 8 && rollNumberStr.isNotBlank() && hasConsented
-    val isTeacherValid = fullName.isNotBlank() && email.isNotBlank() && password.length >= 8 && teacherDepartment.isNotBlank()
+    val isEmailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    val isPasskeyValid = facultyPasskey.trim().uppercase() in listOf("TEACHER2026", "FACULTY2026", "SWIFF2026")
+    val isStudentValid = fullName.isNotBlank() && isEmailValid && password.length >= 8 && rollNumberStr.isNotBlank() && hasConsented
+    val isTeacherValid = fullName.isNotBlank() && isEmailValid && password.length >= 8 && teacherDepartment.isNotBlank() && isPasskeyValid
     val isFormValid = !isLoading && (if (isTeacherRole) isTeacherValid else isStudentValid)
 
     Box(
@@ -513,6 +516,13 @@ fun SignUpScreen(
                     onValueChange = { teacherDepartment = it },
                     label = "Department",
                     placeholder = "e.g. Computer Science, BCA, AI"
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                PrototypeFieldRow(
+                    value = facultyPasskey,
+                    onValueChange = { facultyPasskey = it },
+                    label = "Faculty passkey (TEACHER2026)",
+                    placeholder = "Enter department passkey"
                 )
             }
 

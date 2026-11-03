@@ -99,7 +99,6 @@ dependencies {
 
     // ML & Computer Vision
     implementation(libs.mlkit.face.detection)
-    implementation(libs.mediapipe.tasks.vision)
     implementation(libs.tensorflow.lite)
     implementation(libs.tensorflow.lite.gpu)
     implementation(libs.opencv)

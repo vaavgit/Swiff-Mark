@@ -23,16 +23,9 @@ This directory contains the database migration scripts and Row Level Security (R
    - `face_embeddings` — 512-dimensional AdaFace facial embedding vectors.
    - `attendance_sessions` — Timestamped lecture sessions created by faculty.
    - `attendance_records` — Per-student session results (photo 1 matched, photo 2 matched, dual presence, final status).
+   - Strict Row Level Security (RLS) policies, security-definer helper functions, and anti-tamper triggers.
 
-### 3. Apply Production Security & RLS Policies
-1. In the **SQL Editor**, open another **New Query**.
-2. Copy the contents of [`policies.sql`](./policies.sql) and paste them into the editor.
-3. Click **Run**. This establishes strict Row Level Security (RLS) rules:
-   - **Teachers** can only view/manage classes and attendance sessions they created.
-   - **Students** can only view their own enrolled classes and attendance history.
-   - **Biometric Embeddings** are protected against unauthorized manipulation.
-
-### 4. Connect to the Android App
+### 3. Connect to the Android App
 1. Go to **Project Settings** $\rightarrow$ **API**.
 2. Copy your **Project URL** and **anon / public key**.
 3. Paste them into your `local.properties` file in the Android project root:

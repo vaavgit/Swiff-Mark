@@ -17,6 +17,9 @@ class FaceClassifierHelper(private val context: Context) {
     private var inputSize: Int = 112
     private var outputDim: Int = 512
 
+    var loadErrorMessage: String? = null
+        private set
+
     val isModelLoaded: Boolean
         get() = interpreter != null
 
@@ -33,7 +36,8 @@ class FaceClassifierHelper(private val context: Context) {
             if (modelSize < 5 * 1024 * 1024) {
                 val errorMsg = "Model file $modelName is invalid or corrupted ($modelSize bytes). Git LFS binary download required."
                 Log.e(tag, errorMsg)
-                throw IllegalStateException(errorMsg)
+                loadErrorMessage = errorMsg
+                return
             }
 
             val options = Interpreter.Options().apply {
@@ -53,10 +57,13 @@ class FaceClassifierHelper(private val context: Context) {
             }
 
             interpreter = tflite
+            loadErrorMessage = null
             Log.i(tag, "Loaded $modelName successfully. Input size: $inputSize, Output dim: $outputDim")
         } catch (e: Exception) {
-            Log.e(tag, "Failed to load model $modelName", e)
-            throw IllegalStateException("Failed to load face recognition model $modelName: ${e.message}", e)
+            val errorMsg = "Failed to load face recognition model $modelName: ${e.message}"
+            Log.e(tag, errorMsg, e)
+            loadErrorMessage = errorMsg
+            interpreter = null
         }
     }
 
@@ -74,7 +81,10 @@ class FaceClassifierHelper(private val context: Context) {
      * Normalized BGR format [-1.0, 1.0] matching AdaFace requirements.
      */
     fun getFaceEmbedding(faceBitmap: Bitmap): FloatArray {
-        val tflite = interpreter ?: throw IllegalStateException("Face recognition model is not loaded.")
+        val tflite = interpreter ?: run {
+            Log.w(tag, "getFaceEmbedding called but model is not loaded.")
+            return FloatArray(outputDim) { 0f }
+        }
 
         // 1. Resize cropped face to inputSize x inputSize
         val resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, inputSize, inputSize, true)

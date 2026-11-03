@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     id TEXT PRIMARY KEY,
     email TEXT,
     full_name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('TEACHER', 'STUDENT', 'ADMIN')),
+    role TEXT NOT NULL CHECK (role IN ('TEACHER', 'STUDENT')),
     avatar_url TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
@@ -146,6 +146,54 @@ CREATE TRIGGER on_auth_user_created
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ==============================================================================
+-- ROLE IMMUTABILITY TRIGGER (SECURITY DEFINER)
+-- Prevents authenticated users from escalating their role to TEACHER or ADMIN
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.prevent_role_escalation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF OLD.role IS DISTINCT FROM NEW.role THEN
+        RAISE EXCEPTION 'Role changes are not permitted for security reasons.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_prevent_role_escalation ON public.profiles;
+CREATE TRIGGER tr_prevent_role_escalation
+    BEFORE UPDATE ON public.profiles
+    FOR EACH ROW EXECUTE FUNCTION public.prevent_role_escalation();
+
+-- ==============================================================================
+-- ATTENDANCE OVERRIDE AUDIT TRIGGER (SECURITY DEFINER)
+-- Enforces server-side audit timestamps and actor identification on manual overrides
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.audit_attendance_override()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF (OLD.marked_present IS DISTINCT FROM NEW.marked_present) THEN
+        NEW.manually_overridden := true;
+        NEW.manually_overridden_at := now();
+        NEW.overridden_by := COALESCE(auth.uid()::text, 'TEACHER');
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tr_audit_attendance_override ON public.attendance_records;
+CREATE TRIGGER tr_audit_attendance_override
+    BEFORE UPDATE ON public.attendance_records
+    FOR EACH ROW EXECUTE FUNCTION public.audit_attendance_override();
+
+-- ==============================================================================
 -- SECURE JOIN CODE RPC (SECURITY DEFINER)
 -- Prevents exposing join codes via public SELECT queries.
 -- ==============================================================================
@@ -199,6 +247,9 @@ BEGIN
     );
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.join_class_by_code(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.join_class_by_code(text) TO authenticated;
 
 -- ==============================================================================
 -- RLS HELPER FUNCTIONS (SECURITY DEFINER)
@@ -285,8 +336,7 @@ CREATE POLICY "profiles_insert" ON public.profiles FOR INSERT TO authenticated
     WITH CHECK (id::text = (auth.uid())::text);
 CREATE POLICY "profiles_update" ON public.profiles FOR UPDATE TO authenticated
     USING (id::text = (auth.uid())::text) WITH CHECK (id::text = (auth.uid())::text);
-CREATE POLICY "profiles_delete" ON public.profiles FOR DELETE TO authenticated
-    USING (id::text = (auth.uid())::text);
+-- Direct client DELETE on profiles is disabled to prevent students from erasing academic history.
 
 -- 2. Students
 DROP POLICY IF EXISTS "students_select" ON public.students;
@@ -319,7 +369,16 @@ DROP POLICY IF EXISTS "Teachers update policy" ON public.teachers;
 DROP POLICY IF EXISTS "Teachers delete policy" ON public.teachers;
 DROP POLICY IF EXISTS "Allow all on teachers" ON public.teachers;
 
-CREATE POLICY "teachers_select" ON public.teachers FOR SELECT TO authenticated USING (true);
+CREATE POLICY "teachers_select" ON public.teachers FOR SELECT TO authenticated
+    USING (
+        teacher_id::text = (auth.uid())::text
+        OR EXISTS (
+            SELECT 1 FROM public.classes c
+            JOIN public.class_enrollments ce ON ce.class_id::text = c.class_id::text
+            WHERE c.teacher_id::text = public.teachers.teacher_id::text
+            AND ce.student_id::text = (auth.uid())::text
+        )
+    );
 CREATE POLICY "teachers_insert" ON public.teachers FOR INSERT TO authenticated
     WITH CHECK (teacher_id::text = (auth.uid())::text AND public.get_user_role((auth.uid())::text) = 'TEACHER');
 CREATE POLICY "teachers_update" ON public.teachers FOR UPDATE TO authenticated
@@ -367,8 +426,8 @@ CREATE POLICY "enrollments_select" ON public.class_enrollments FOR SELECT TO aut
         student_id::text = (auth.uid())::text 
         OR public.is_teacher_of_class(public.class_enrollments.class_id::text, (auth.uid())::text)
     );
-CREATE POLICY "enrollments_insert" ON public.class_enrollments FOR INSERT TO authenticated
-    WITH CHECK (student_id::text = (auth.uid())::text);
+-- Direct client INSERT on class_enrollments is intentionally omitted.
+-- All class joins MUST pass through the secure join_class_by_code RPC function.
 CREATE POLICY "enrollments_delete" ON public.class_enrollments FOR DELETE TO authenticated
     USING (
         student_id::text = (auth.uid())::text 
