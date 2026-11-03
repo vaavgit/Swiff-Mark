@@ -1,5 +1,6 @@
 package com.vaibhav.facialattendancesystem.ui.auth
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,16 +14,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.AutofillNode
+import androidx.compose.ui.autofill.AutofillType
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalAutofill
+import androidx.compose.ui.platform.LocalAutofillTree
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -121,6 +131,7 @@ fun PrototypeSegmentedTab(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PrototypeFieldRow(
     value: String,
@@ -134,6 +145,38 @@ fun PrototypeFieldRow(
     keyboardType: KeyboardType = KeyboardType.Text
 ) {
     val borderColor = adaptiveBorderColor()
+    val isEmailField = (keyboardType == KeyboardType.Email) || (label?.contains("email", ignoreCase = true) == true)
+
+    val effectiveKeyboardOptions = when {
+        isPassword -> KeyboardOptions(
+            keyboardType = KeyboardType.Password,
+            autoCorrect = false,
+            capitalization = KeyboardCapitalization.None
+        )
+        isEmailField -> KeyboardOptions(
+            keyboardType = KeyboardType.Email,
+            autoCorrect = false,
+            capitalization = KeyboardCapitalization.None
+        )
+        else -> KeyboardOptions(
+            keyboardType = keyboardType,
+            autoCorrect = false
+        )
+    }
+
+    val autofill = LocalAutofill.current
+    val autofillNode = if (isEmailField) {
+        remember {
+            AutofillNode(
+                onFill = { onValueChange(it) },
+                autofillTypes = listOf(AutofillType.EmailAddress)
+            )
+        }
+    } else null
+
+    if (autofillNode != null) {
+        LocalAutofillTree.current += autofillNode
+    }
 
     Column(modifier = modifier.fillMaxWidth()) {
         if (label != null) {
@@ -160,7 +203,7 @@ fun PrototypeFieldRow(
                 onValueChange = onValueChange,
                 singleLine = true,
                 visualTransformation = if (isPassword && !passwordVisible) PasswordVisualTransformation() else VisualTransformation.None,
-                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                keyboardOptions = effectiveKeyboardOptions,
                 cursorBrush = SolidColor(PrimaryCyan),
                 textStyle = TextStyle(
                     color = MaterialTheme.colorScheme.onBackground,
@@ -179,7 +222,25 @@ fun PrototypeFieldRow(
                         innerTextField()
                     }
                 },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (autofillNode != null) {
+                            Modifier
+                                .onGloballyPositioned { coordinates ->
+                                    autofillNode.boundingBox = coordinates.boundsInWindow()
+                                }
+                                .onFocusChanged { focusState ->
+                                    autofill?.run {
+                                        if (focusState.isFocused) {
+                                            requestAutofillForNode(autofillNode)
+                                        } else {
+                                            cancelAutofillForNode(autofillNode)
+                                        }
+                                    }
+                                }
+                        } else Modifier
+                    )
             )
             if (isPassword && onTogglePasswordVisibility != null) {
                 Box(
@@ -208,7 +269,7 @@ fun LoginScreen(
     initialEmail: String = "",
     initialPassword: String = "",
     initialIsTeacher: Boolean = false,
-    initialSaveLogin: Boolean = false,
+    initialSaveLogin: Boolean = true,
     errorMessage: String? = null,
     isLoading: Boolean = false
 ) {
@@ -624,13 +685,25 @@ fun SignUpScreen(
 fun ForgotPasswordScreen(
     onSendResetLink: (email: String) -> Unit,
     onBackToLogin: () -> Unit,
+    onManualTokenEntered: (String) -> Unit = {},
     isLoading: Boolean = false,
     statusMessage: String? = null,
     isError: Boolean = false
 ) {
     var email by remember { mutableStateOf("") }
+    var manualTokenOrUrl by remember { mutableStateOf("") }
     val isDark = isAppDarkTheme()
     val isFormValid = !isLoading && email.isNotBlank() && email.contains("@")
+
+    val extractToken: (String) -> String = { raw ->
+        val trimmed = raw.trim()
+        when {
+            trimmed.contains("access_token=") -> {
+                trimmed.substringAfter("access_token=").substringBefore("&").trim()
+            }
+            else -> trimmed
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -647,7 +720,7 @@ fun ForgotPasswordScreen(
                 .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(30.dp))
 
             Text(
                 text = "Reset your password",
@@ -662,7 +735,7 @@ fun ForgotPasswordScreen(
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
+                modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
             )
 
             PrototypeFieldRow(
@@ -713,6 +786,56 @@ fun ForgotPasswordScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Manual recovery token / localhost URL input section
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, adaptiveBorderColor()),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "Received a reset link or localhost URL?",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "If clicking the link in your email gave a localhost:3000 error, paste that link or token below to reset instantly:",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                    )
+                    PrototypeFieldRow(
+                        value = manualTokenOrUrl,
+                        onValueChange = { manualTokenOrUrl = it },
+                        placeholder = "Paste localhost URL or token"
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            val token = extractToken(manualTokenOrUrl)
+                            if (token.isNotBlank()) {
+                                onManualTokenEntered(token)
+                            }
+                        },
+                        enabled = manualTokenOrUrl.isNotBlank(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                    ) {
+                        Text("Reset with Token / Link", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
@@ -738,14 +861,26 @@ fun ResetPasswordScreen(
     statusMessage: String? = null,
     isError: Boolean = false
 ) {
+    var activeToken by remember { mutableStateOf(recoveryToken) }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var newPasswordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
     val isDark = isAppDarkTheme()
 
+    val extractToken: (String) -> String = { raw ->
+        val trimmed = raw.trim()
+        when {
+            trimmed.contains("access_token=") -> {
+                trimmed.substringAfter("access_token=").substringBefore("&").trim()
+            }
+            else -> trimmed
+        }
+    }
+
+    val effectiveToken = extractToken(activeToken)
     val passwordsMatch = newPassword.isNotEmpty() && newPassword == confirmPassword
-    val isFormValid = !isLoading && newPassword.length >= 8 && passwordsMatch
+    val isFormValid = !isLoading && effectiveToken.isNotBlank() && newPassword.length >= 8 && passwordsMatch
 
     Box(
         modifier = Modifier
@@ -772,6 +907,16 @@ fun ResetPasswordScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(bottom = 20.dp)
             )
+
+            if (recoveryToken.isBlank()) {
+                PrototypeFieldRow(
+                    value = activeToken,
+                    onValueChange = { activeToken = it },
+                    label = "Recovery token or localhost URL",
+                    placeholder = "Paste localhost:3000/#access_token=..."
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             PrototypeFieldRow(
                 value = newPassword,
@@ -844,7 +989,7 @@ fun ResetPasswordScreen(
             Spacer(modifier = Modifier.height(18.dp))
 
             Button(
-                onClick = { onResetPasswordSubmit(recoveryToken, newPassword.trim()) },
+                onClick = { onResetPasswordSubmit(effectiveToken, newPassword.trim()) },
                 enabled = isFormValid,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(

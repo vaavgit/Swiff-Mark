@@ -588,6 +588,9 @@ fun AppNavigation(
                         }
                     },
                     onBackToLogin = { navController.navigate(Screen.Login.route) },
+                    onManualTokenEntered = { token ->
+                        navController.navigate(Screen.ResetPassword.createRoute(token))
+                    },
                     isLoading = forgotLoading,
                     statusMessage = forgotMsg,
                     isError = forgotIsError

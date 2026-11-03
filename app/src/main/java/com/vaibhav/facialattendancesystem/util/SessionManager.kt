@@ -34,11 +34,6 @@ class SessionManager(context: Context) {
     }
 
     init {
-        val ver = prefs.getInt(KEY_DATA_VERSION, 1)
-        if (ver < CURRENT_DATA_VERSION) {
-            clearSession()
-            prefs.edit().putInt(KEY_DATA_VERSION, CURRENT_DATA_VERSION).commit()
-        }
         if (prefs.contains(KEY_SAVED_PASSWORD)) {
             prefs.edit().remove(KEY_SAVED_PASSWORD).apply()
         }
@@ -158,7 +153,7 @@ class SessionManager(context: Context) {
         saveLoginCredentials(email, isTeacher, save)
     }
 
-    fun isSaveLoginEnabled(): Boolean = prefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, false)
+    fun isSaveLoginEnabled(): Boolean = prefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, true)
     fun getSavedEmail(): String = prefs.getString(KEY_SAVED_EMAIL, "") ?: ""
     fun getSavedIsTeacher(): Boolean = prefs.getBoolean(KEY_SAVED_IS_TEACHER, false)
 

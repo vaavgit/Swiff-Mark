@@ -12,6 +12,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -595,15 +597,22 @@ fun JoinClassDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Enter the class code provided by your teacher (e.g. CS-4821):",
+                    text = "Enter the class code provided by your teacher (e.g. AI-7081):",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 OutlinedTextField(
                     value = code,
-                    onValueChange = { code = it.uppercase() },
+                    onValueChange = { newVal ->
+                        code = formatClassCodeInput(newVal, code)
+                    },
                     label = { Text("Class Code") },
+                    placeholder = { Text("e.g. AI-7081") },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        autoCorrect = false
+                    ),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -626,4 +635,24 @@ fun JoinClassDialog(
             }
         }
     )
+}
+
+private fun formatClassCodeInput(newInput: String, previousInput: String): String {
+    val upper = newInput.uppercase()
+    if (previousInput.endsWith("-") && upper == previousInput.dropLast(1)) {
+        return upper.dropLast(1)
+    }
+    val raw = upper.replace("-", "").replace(" ", "").filter { it.isLetterOrDigit() }
+    return when {
+        raw.isEmpty() -> ""
+        raw.length == 1 -> raw
+        raw.length == 2 -> {
+            if (newInput.length > previousInput.length) "$raw-" else raw
+        }
+        else -> {
+            val prefix = raw.take(2)
+            val suffix = raw.drop(2).take(6)
+            "$prefix-$suffix"
+        }
+    }
 }

@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -300,12 +303,16 @@ fun StudentEnrollmentScreen(
             (primaryFace.boundingBox.width() >= frame.width * 0.20f) &&
             (primaryFace.boundingBox.centerX() in (frame.width * 0.20f)..(frame.width * 0.80f)) &&
             (primaryFace.boundingBox.centerY() in (frame.height * 0.15f)..(frame.height * 0.85f))
+        val haptic = LocalHapticFeedback.current
         val (isPoseValid, posePrompt) = checkStepPose(currentAngle, primaryFace)
         val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
 
-        Button(
-            onClick = {
-                val currentFrame = currentFrameBitmap ?: return@Button
+        val onExecuteCapture: () -> Unit = {
+            val currentFrame = currentFrameBitmap
+            if (currentFrame != null && !isProcessingStep && hasValidFace && isPoseValid) {
+                try {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                } catch (_: Exception) {}
                 val faceBox = primaryFace?.boundingBox ?: RectF(
                     currentFrame.width * 0.15f,
                     currentFrame.height * 0.15f,
@@ -316,10 +323,7 @@ fun StudentEnrollmentScreen(
                 isProcessingStep = true
 
                 scope.launch(Dispatchers.Default) {
-                    // Natural face crop for clean, high-resolution, unwarped user UI display
                     val displayCrop = ImageQualityValidator.cropBitmapSafely(currentFrame, faceBox)
-
-                    // Backend-only normalized & enhanced chip for AdaFace embedding generation
                     val alignedFace = if (targetFace != null) {
                         FaceAligner.align(currentFrame, targetFace)
                     } else {
@@ -350,7 +354,27 @@ fun StudentEnrollmentScreen(
                         }
                     }
                 }
-            },
+            }
+        }
+
+        var isHoldingValidPose by remember { mutableStateOf(false) }
+
+        // Hands-free auto capture: automatically captures when user holds the verified pose
+        LaunchedEffect(isReadyToCapture, currentStepIndex) {
+            if (isReadyToCapture && !isProcessingStep && !isFinished) {
+                isHoldingValidPose = true
+                kotlinx.coroutines.delay(600L)
+                if (isReadyToCapture && !isProcessingStep && !isFinished) {
+                    onExecuteCapture()
+                }
+                isHoldingValidPose = false
+            } else {
+                isHoldingValidPose = false
+            }
+        }
+
+        Button(
+            onClick = onExecuteCapture,
             enabled = isReadyToCapture,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
@@ -376,6 +400,13 @@ fun StudentEnrollmentScreen(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = WarningAmber
+                )
+            } else if (isHoldingValidPose) {
+                Text(
+                    text = "HOLD STILL... AUTO-CAPTURING",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
                 )
             } else {
                 Text(

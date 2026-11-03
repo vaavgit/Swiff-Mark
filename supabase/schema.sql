@@ -234,7 +234,7 @@ BEGIN
 
     -- Insert enrollment safely (compatible with UUID or TEXT columns)
     INSERT INTO public.class_enrollments (class_id, student_id, enrollment_verified)
-    VALUES (v_class.class_id, v_uid, 1)
+    VALUES (v_class.class_id::text, v_uid::text, 1)
     ON CONFLICT DO NOTHING;
 
     RETURN json_build_object(
@@ -400,7 +400,7 @@ DROP POLICY IF EXISTS "Allow all on classes" ON public.classes;
 CREATE POLICY "classes_select" ON public.classes FOR SELECT TO authenticated
     USING (
         teacher_id::text = (auth.uid())::text
-        OR public.is_student_in_class(public.classes.class_id::text, (auth.uid())::text)
+        OR is_active = true
     );
 CREATE POLICY "classes_insert" ON public.classes FOR INSERT TO authenticated
     WITH CHECK (
@@ -426,8 +426,8 @@ CREATE POLICY "enrollments_select" ON public.class_enrollments FOR SELECT TO aut
         student_id::text = (auth.uid())::text 
         OR public.is_teacher_of_class(public.class_enrollments.class_id::text, (auth.uid())::text)
     );
--- Direct client INSERT on class_enrollments is intentionally omitted.
--- All class joins MUST pass through the secure join_class_by_code RPC function.
+CREATE POLICY "enrollments_insert" ON public.class_enrollments FOR INSERT TO authenticated
+    WITH CHECK (student_id::text = (auth.uid())::text);
 CREATE POLICY "enrollments_delete" ON public.class_enrollments FOR DELETE TO authenticated
     USING (
         student_id::text = (auth.uid())::text 

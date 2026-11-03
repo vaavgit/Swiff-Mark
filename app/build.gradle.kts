@@ -23,8 +23,8 @@ android {
         applicationId = "com.vaibhav.facialattendancesystem"
         minSdk = 26
         targetSdk = 37
-        versionCode = 8
-        versionName = "1.2.2"
+        versionCode = 9
+        versionName = "1.2.3"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
