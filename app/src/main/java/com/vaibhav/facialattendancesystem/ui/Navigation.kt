@@ -23,7 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import com.vaibhav.facialattendancesystem.ui.theme.PrimaryCyan
+import com.vaibhav.facialattendancesystem.ui.theme.ErrorRose
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -204,6 +207,9 @@ fun AppNavigation(
     }
 
     var availableUpdate by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var updateDownloadProgress by remember { mutableStateOf(0f) }
+    var updateDownloadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
@@ -1718,37 +1724,95 @@ fun AppNavigation(
         if (currentUpdate != null) {
             val (latestTag, releaseNotes, downloadUrl) = currentUpdate
             androidx.compose.material3.AlertDialog(
-                onDismissRequest = { availableUpdate = null },
+                onDismissRequest = {
+                    if (!isDownloadingUpdate) {
+                        availableUpdate = null
+                        updateDownloadError = null
+                    }
+                },
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
                 title = {
-                    Text("Update Available ($latestTag)", fontWeight = FontWeight.Bold)
+                    Text("Update Available ($latestTag)", fontWeight = FontWeight.Bold, color = PrimaryCyan)
                 },
                 text = {
-                    Text(
-                        text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
-                        fontSize = 14.sp
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (isDownloadingUpdate) {
+                            Text(
+                                text = "Downloading update... ${(updateDownloadProgress * 100).toInt()}%",
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { updateDownloadProgress },
+                                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                                color = PrimaryCyan
+                            )
+                        } else {
+                            if (updateDownloadError != null) {
+                                Text(
+                                    text = updateDownloadError ?: "",
+                                    color = ErrorRose,
+                                    fontSize = 12.5.sp
+                                )
+                            }
+                            Text(
+                                text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
+                                fontSize = 13.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 },
                 confirmButton = {
                     androidx.compose.material3.Button(
                         onClick = {
-                            availableUpdate = null
-                            try {
-                                val intent = android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(downloadUrl)
-                                )
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+                            if (!isDownloadingUpdate) {
+                                isDownloadingUpdate = true
+                                updateDownloadProgress = 0f
+                                updateDownloadError = null
+                                scope.launch(Dispatchers.IO) {
+                                    val apkFile = com.vaibhav.facialattendancesystem.data.CloudSyncManager.downloadApk(
+                                        context = context,
+                                        downloadUrl = downloadUrl,
+                                        onProgress = { p -> updateDownloadProgress = p }
+                                    )
+                                    withContext(Dispatchers.Main) {
+                                        isDownloadingUpdate = false
+                                        if (apkFile != null) {
+                                            val launched = com.vaibhav.facialattendancesystem.data.CloudSyncManager.launchApkInstall(context, apkFile)
+                                            if (launched) {
+                                                availableUpdate = null
+                                            } else {
+                                                updateDownloadError = "Could not open installer. Please grant install permission."
+                                            }
+                                        } else {
+                                            updateDownloadError = "Download failed. Please check internet connection."
+                                        }
+                                    }
+                                }
                             }
-                        }
+                        },
+                        enabled = !isDownloadingUpdate,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
                     ) {
-                        Text("Download")
+                        Text(
+                            text = if (isDownloadingUpdate) "DOWNLOADING..." else "UPDATE NOW",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { availableUpdate = null }) {
-                        Text("Later")
+                    if (!isDownloadingUpdate) {
+                        TextButton(onClick = {
+                            availableUpdate = null
+                            updateDownloadError = null
+                        }) {
+                            Text("LATER", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             )

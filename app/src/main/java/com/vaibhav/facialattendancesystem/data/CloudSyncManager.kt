@@ -1417,4 +1417,90 @@ object CloudSyncManager {
         }
         return false
     }
+
+    /**
+     * Downloads an update APK directly into the app's cache directory,
+     * following GitHub redirect locations and invoking onProgress with a 0.0 - 1.0 fraction.
+     */
+    suspend fun downloadApk(
+        context: Context,
+        downloadUrl: String,
+        onProgress: (Float) -> Unit
+    ): java.io.File? = withContext(Dispatchers.IO) {
+        try {
+            var currentUrl = downloadUrl
+            var connection: HttpURLConnection? = null
+            var redirects = 0
+            while (redirects < 5) {
+                val url = URL(currentUrl)
+                connection = url.openConnection() as HttpURLConnection
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = 15000
+                connection.readTimeout = 30000
+                connection.setRequestProperty("User-Agent", "SwiffMark-Android")
+                val code = connection.responseCode
+                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
+                    val loc = connection.getHeaderField("Location") ?: break
+                    connection.disconnect()
+                    currentUrl = loc
+                    redirects++
+                } else if (code in 200..299) {
+                    break
+                } else {
+                    connection.disconnect()
+                    return@withContext null
+                }
+            }
+
+            val conn = connection ?: return@withContext null
+            val fileLength = conn.contentLength.coerceAtLeast(1)
+            val updatesDir = java.io.File(context.cacheDir, "updates").apply { mkdirs() }
+            val apkFile = java.io.File(updatesDir, "swiffmark-update.apk")
+            if (apkFile.exists()) apkFile.delete()
+
+            conn.inputStream.use { input ->
+                java.io.FileOutputStream(apkFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    var count: Int
+                    while (input.read(buffer).also { count = it } != -1) {
+                        total += count
+                        output.write(buffer, 0, count)
+                        val progress = (total.toFloat() / fileLength.toFloat()).coerceIn(0f, 1f)
+                        withContext(Dispatchers.Main) {
+                            onProgress(progress)
+                        }
+                    }
+                }
+            }
+            conn.disconnect()
+            apkFile
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * Prompts the Android PackageInstaller to update the application using the downloaded APK.
+     */
+    fun launchApkInstall(context: Context, apkFile: java.io.File): Boolean {
+        return try {
+            val apkUri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
 }

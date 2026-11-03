@@ -2,4 +2,6 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-files-path name="exports" path="exports/" />
     <files-path name="internal_exports" path="exports/" />
+    <cache-path name="update_cache" path="updates/" />
+    <external-cache-path name="ext_update_cache" path="updates/" />
 </paths>
