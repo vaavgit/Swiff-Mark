@@ -124,18 +124,35 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+    v_requested_role TEXT;
+    v_safe_role TEXT;
 BEGIN
+    -- Read the role the client sent in signup metadata
+    v_requested_role := UPPER(TRIM(COALESCE(NEW.raw_user_meta_data->>'role', 'STUDENT')));
+
+    -- Only allow TEACHER or STUDENT; anything else (ADMIN, etc.) becomes STUDENT
+    IF v_requested_role = 'TEACHER' THEN
+        v_safe_role := 'TEACHER';
+    ELSE
+        v_safe_role := 'STUDENT';
+    END IF;
+
     INSERT INTO public.profiles (id, email, full_name, role)
     VALUES (
         NEW.id::text,
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'),
-        COALESCE(UPPER(NEW.raw_user_meta_data->>'role'), 'STUDENT')
+        v_safe_role
     )
     ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
         full_name = EXCLUDED.full_name,
-        role = EXCLUDED.role;
+        -- Never downgrade an existing TEACHER to STUDENT on conflict
+        role = CASE
+            WHEN profiles.role = 'TEACHER' THEN 'TEACHER'
+            ELSE v_safe_role
+        END;
     RETURN NEW;
 END;
 $$;
@@ -400,7 +417,7 @@ DROP POLICY IF EXISTS "Allow all on classes" ON public.classes;
 CREATE POLICY "classes_select" ON public.classes FOR SELECT TO authenticated
     USING (
         teacher_id::text = (auth.uid())::text
-        OR is_active = true
+        OR public.is_student_in_class(class_id::text, (auth.uid())::text)
     );
 CREATE POLICY "classes_insert" ON public.classes FOR INSERT TO authenticated
     WITH CHECK (
