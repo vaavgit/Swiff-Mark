@@ -61,8 +61,8 @@ fun MinimalistEyeIcon(
         if (visible) {
             val eyePath = Path().apply {
                 moveTo(w * 0.08f, h * 0.5f)
-                quadraticBezierTo(w * 0.5f, h * 0.12f, w * 0.92f, h * 0.5f)
-                quadraticBezierTo(w * 0.5f, h * 0.88f, w * 0.08f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.12f, w * 0.92f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.88f, w * 0.08f, h * 0.5f)
                 close()
             }
             drawPath(path = eyePath, color = tint, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
@@ -70,8 +70,8 @@ fun MinimalistEyeIcon(
         } else {
             val eyePath = Path().apply {
                 moveTo(w * 0.08f, h * 0.5f)
-                quadraticBezierTo(w * 0.5f, h * 0.12f, w * 0.92f, h * 0.5f)
-                quadraticBezierTo(w * 0.5f, h * 0.88f, w * 0.08f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.12f, w * 0.92f, h * 0.5f)
+                quadraticTo(w * 0.5f, h * 0.88f, w * 0.08f, h * 0.5f)
                 close()
             }
             drawPath(path = eyePath, color = tint.copy(alpha = 0.50f), style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
@@ -150,17 +150,17 @@ fun PrototypeFieldRow(
     val effectiveKeyboardOptions = when {
         isPassword -> KeyboardOptions(
             keyboardType = KeyboardType.Password,
-            autoCorrect = false,
+            autoCorrectEnabled = false,
             capitalization = KeyboardCapitalization.None
         )
         isEmailField -> KeyboardOptions(
             keyboardType = KeyboardType.Email,
-            autoCorrect = false,
+            autoCorrectEnabled = false,
             capitalization = KeyboardCapitalization.None
         )
         else -> KeyboardOptions(
             keyboardType = keyboardType,
-            autoCorrect = false
+            autoCorrectEnabled = false
         )
     }
 
@@ -457,7 +457,7 @@ fun LoginScreen(
 @Composable
 fun SignUpScreen(
     initialIsTeacher: Boolean = false,
-    onStudentSignUpClick: (name: String, rollNo: Int, email: String, pass: String, section: String) -> Unit,
+    onStudentSignUpClick: (name: String, rollNo: String, email: String, pass: String, section: String) -> Unit,
     onTeacherSignUpClick: (name: String, department: String, email: String, pass: String) -> Unit,
     onNavigateToLogin: () -> Unit,
     errorMessage: String? = null,
@@ -645,7 +645,7 @@ fun SignUpScreen(
                     if (isTeacherRole) {
                         onTeacherSignUpClick(fullName.trim(), teacherDepartment.trim(), email.trim(), password.trim())
                     } else {
-                        val rollNo = rollNumberStr.trim().toIntOrNull() ?: 0
+                        val rollNo = rollNumberStr.trim()
                         onStudentSignUpClick(fullName.trim(), rollNo, email.trim(), password.trim(), classSection.trim())
                     }
                 },

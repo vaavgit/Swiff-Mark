@@ -11,7 +11,7 @@ enum class ConfidenceTier {
 
 data class RecognitionCandidate(
     val studentId: String,
-    val rollNumber: Int,
+    val rollNumber: String,
     val fullName: String,
     val distance: Float, // Cosine distance (1.0 - Cosine Similarity)
     val confidenceScore: Float, // Cosine Similarity (0.0 to 1.0)

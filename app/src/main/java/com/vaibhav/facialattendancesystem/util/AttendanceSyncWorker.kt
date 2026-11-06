@@ -52,7 +52,7 @@ class AttendanceSyncWorker(
                                 email = localStudent.email,
                                 fullName = localStudent.fullName,
                                 role = "STUDENT",
-                                rollOrSubject = localStudent.rollNumber.toString(),
+                                rollOrSubject = localStudent.rollNumber,
                                 sectionOrDept = localStudent.classSection ?: ""
                             )
                         }

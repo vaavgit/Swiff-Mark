@@ -233,9 +233,6 @@ fun AppNavigation(
     }
 
     var availableUpdate by remember { mutableStateOf<Triple<String, String, String>?>(null) }
-    var isDownloadingUpdate by remember { mutableStateOf(false) }
-    var updateDownloadProgress by remember { mutableStateOf(0f) }
-    var updateDownloadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
@@ -662,7 +659,7 @@ fun AppNavigation(
                                     email = currentStudent.email,
                                     fullName = name,
                                     role = "STUDENT",
-                                    rollOrSubject = rollNo.toString(),
+                                    rollOrSubject = rollNo,
                                     sectionOrDept = section
                                 )
                                 withContext(Dispatchers.Main) {
@@ -1354,110 +1351,44 @@ fun AppNavigation(
         if (currentUpdate != null) {
             val (latestTag, releaseNotes, downloadUrl) = currentUpdate
             androidx.compose.material3.AlertDialog(
-                onDismissRequest = {
-                    if (!isDownloadingUpdate) {
-                        availableUpdate = null
-                        updateDownloadError = null
-                    }
-                },
+                onDismissRequest = { availableUpdate = null },
                 shape = RoundedCornerShape(20.dp),
                 containerColor = MaterialTheme.colorScheme.surface,
                 title = {
                     Text("Update Available ($latestTag)", fontWeight = FontWeight.Bold, color = PrimaryCyan)
                 },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (isDownloadingUpdate) {
-                            Text(
-                                text = "Downloading update... ${(updateDownloadProgress * 100).toInt()}%",
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            androidx.compose.material3.LinearProgressIndicator(
-                                progress = { updateDownloadProgress },
-                                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                                color = PrimaryCyan
-                            )
-                        } else {
-                            if (updateDownloadError != null) {
-                                Text(
-                                    text = updateDownloadError ?: "",
-                                    color = ErrorRose,
-                                    fontSize = 12.5.sp
-                                )
-                            }
-                            Text(
-                                text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
-                                fontSize = 13.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                    Text(
+                        text = if (releaseNotes.length > 300) releaseNotes.take(300) + "..." else releaseNotes,
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 },
                 confirmButton = {
                     androidx.compose.material3.Button(
                         onClick = {
-                            if (!isDownloadingUpdate) {
-                                isDownloadingUpdate = true
-                                updateDownloadProgress = 0f
-                                updateDownloadError = null
-                                scope.launch(Dispatchers.IO) {
-                                    val apkFile = com.vaibhav.facialattendancesystem.data.CloudSyncManager.downloadApk(
-                                        context = context,
-                                        downloadUrl = downloadUrl,
-                                        onProgress = { p -> updateDownloadProgress = p }
-                                    )
-                                    withContext(Dispatchers.Main) {
-                                        isDownloadingUpdate = false
-                                        if (apkFile != null) {
-                                            val launched = com.vaibhav.facialattendancesystem.data.CloudSyncManager.launchApkInstall(context, apkFile)
-                                            if (launched) {
-                                                availableUpdate = null
-                                            } else {
-                                                updateDownloadError = "Could not open installer. Please grant install permission."
-                                            }
-                                        } else {
-                                            updateDownloadError = "Download failed. Please check internet connection."
-                                        }
-                                    }
+                            try {
+                                val browserIntent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(downloadUrl)
+                                ).apply {
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                 }
+                                context.startActivity(browserIntent)
+                            } catch (e: Exception) {
+                                Log.e("Navigation", "Could not open release page", e)
                             }
+                            availableUpdate = null
                         },
-                        enabled = !isDownloadingUpdate,
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
                     ) {
-                        Text(
-                            text = if (isDownloadingUpdate) "DOWNLOADING..." else "UPDATE NOW",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Text("UPDATE NOW", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 },
                 dismissButton = {
-                    if (!isDownloadingUpdate) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(onClick = {
-                                try {
-                                    val browserIntent = android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse(downloadUrl)
-                                    ).apply {
-                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(browserIntent)
-                                } catch (_: Exception) {}
-                            }) {
-                                Text("BROWSER", color = PrimaryCyan)
-                            }
-                            TextButton(onClick = {
-                                availableUpdate = null
-                                updateDownloadError = null
-                            }) {
-                                Text("LATER", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+                    TextButton(onClick = { availableUpdate = null }) {
+                        Text("LATER", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             )

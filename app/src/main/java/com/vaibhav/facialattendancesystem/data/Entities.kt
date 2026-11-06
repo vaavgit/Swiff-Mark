@@ -50,7 +50,7 @@ data class Student(
     @ColumnInfo(name = "user_id")
     val userId: String,
     @ColumnInfo(name = "roll_number")
-    val rollNumber: Int,
+    val rollNumber: String,
     @ColumnInfo(name = "full_name")
     val fullName: String,
     val email: String,

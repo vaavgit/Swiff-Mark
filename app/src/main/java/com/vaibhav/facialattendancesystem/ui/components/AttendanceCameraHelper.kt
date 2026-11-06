@@ -181,8 +181,25 @@ class AttendanceCameraHelper(private val context: Context) {
             captureExecutor,
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
-                    val bitmap = image.toBitmapSafely(isFrontCamera)
+                    val raw = image.toBitmapSafely(isFrontCamera)
                     image.close()
+                    // Scale down to max 1920px on the longest edge to cap memory usage.
+                    // The 4:3 MAXIMIZE_QUALITY capture can be 4032×3024 (12 MP) on high-end sensors;
+                    // face recognition quality is unchanged below ~960px face width, so 1920 is generous.
+                    val bitmap = raw?.let { bmp ->
+                        val maxDim = 1920
+                        if (bmp.width > maxDim || bmp.height > maxDim) {
+                            val scale = maxDim.toFloat() / maxOf(bmp.width, bmp.height)
+                            val scaled = Bitmap.createScaledBitmap(
+                                bmp,
+                                (bmp.width * scale).toInt(),
+                                (bmp.height * scale).toInt(),
+                                true
+                            )
+                            bmp.recycle()
+                            scaled
+                        } else bmp
+                    }
                     mainExecutor.execute { onBitmapReady(bitmap) }
                 }
 

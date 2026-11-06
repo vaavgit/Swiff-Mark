@@ -463,7 +463,7 @@ fun SessionRosterDialog(
                     studentId = rec.studentId,
                     userId = rec.studentId,
                     fullName = "Student ${rec.studentId.take(5)}",
-                    rollNumber = 0,
+                    rollNumber = "",
                     email = "",
                     enrollmentStatus = 1
                 )

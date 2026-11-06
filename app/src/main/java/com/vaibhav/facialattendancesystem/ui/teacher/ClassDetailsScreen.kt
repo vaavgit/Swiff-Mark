@@ -88,7 +88,7 @@ fun ClassDetailsScreen(
             }
             val matchesQuery = searchQuery.isBlank() ||
                 student.fullName.contains(searchQuery, ignoreCase = true) ||
-                student.rollNumber.toString().contains(searchQuery) ||
+                student.rollNumber.contains(searchQuery) ||
                 student.email.contains(searchQuery, ignoreCase = true) ||
                 (student.classSection ?: "").contains(searchQuery, ignoreCase = true)
             matchesFilter && matchesQuery

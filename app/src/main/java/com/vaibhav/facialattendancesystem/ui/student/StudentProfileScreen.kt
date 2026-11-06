@@ -43,7 +43,7 @@ fun StudentProfileScreen(
     joinedClassesCount: Int,
     isDarkTheme: Boolean,
     onThemeToggle: (Boolean) -> Unit,
-    onUpdateProfile: (name: String, rollNo: Int, section: String) -> Unit,
+    onUpdateProfile: (name: String, rollNo: String, section: String) -> Unit,
     onReEnrollFace: () -> Unit,
     onDeleteFaceProfile: () -> Unit = {},
     onLogout: () -> Unit = {},
@@ -473,13 +473,13 @@ fun StudentProfileScreen(
 fun EditStudentProfileDialog(
     student: Student,
     currentName: String,
-    currentRoll: Int,
+    currentRoll: String,
     currentSec: String,
     onDismiss: () -> Unit,
-    onSave: (name: String, rollNo: Int, section: String) -> Unit
+    onSave: (name: String, rollNo: String, section: String) -> Unit
 ) {
     var nameInput by remember(currentName) { mutableStateOf(currentName) }
-    var rollNoInput by remember(currentRoll) { mutableStateOf(currentRoll.toString()) }
+    var rollNoInput by remember(currentRoll) { mutableStateOf(currentRoll) }
     var sectionInput by remember(currentSec) { mutableStateOf(currentSec) }
 
     AlertDialog(
@@ -501,7 +501,6 @@ fun EditStudentProfileDialog(
                     value = rollNoInput,
                     onValueChange = { rollNoInput = it },
                     label = { Text("Roll Number") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = RoundedCornerShape(12.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     modifier = Modifier.fillMaxWidth()
@@ -519,8 +518,7 @@ fun EditStudentProfileDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val rollNo = rollNoInput.toIntOrNull() ?: currentRoll
-                    onSave(nameInput.trim(), rollNo, sectionInput.trim())
+                    onSave(nameInput.trim(), rollNoInput.trim(), sectionInput.trim())
                 },
                 enabled = nameInput.isNotBlank(),
                 shape = RoundedCornerShape(12.dp),

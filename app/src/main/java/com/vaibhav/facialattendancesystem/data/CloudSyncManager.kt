@@ -222,7 +222,10 @@ object CloudSyncManager {
                 executeRequest("/rest/v1/teachers?on_conflict=teacher_id", "POST", teacherJson.toString(), mapOf("Prefer" to "resolution=merge-duplicates"))
             }
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureCloudUserProfile failed", e)
+            false
+        }
     }
 
     suspend fun syncClassRosterForTeacher(classId: String, db: AppDatabase): Pair<Boolean, String> = withContext(Dispatchers.IO) {
@@ -270,14 +273,14 @@ object CloudSyncManager {
             }
 
             // Step 3: Fetch student details (roll number & department) if available
-            val studentMetaMap = mutableMapOf<String, Pair<Int, String>>()
+            val studentMetaMap = mutableMapOf<String, Pair<String, String>>()
             val (sStatus, sResponse) = executeRequest("/rest/v1/students?student_id=in.($idsFilter)&select=*", "GET")
             if (sStatus in 200..299) {
                 val sArray = JSONArray(sResponse)
                 for (i in 0 until sArray.length()) {
                     val s = sArray.getJSONObject(i)
                     val id = s.getString("student_id")
-                    val roll = s.optString("roll_number", "0").toIntOrNull() ?: 0
+                    val roll = s.optString("roll_number", "")
                     val dept = s.optString("department", "")
                     studentMetaMap[id] = Pair(roll, dept)
                 }
@@ -303,7 +306,7 @@ object CloudSyncManager {
             val ctx = contextRef
             for (sId in studentIds) {
                 val (fullName, email) = profilesMap[sId] ?: Pair("Student", "")
-                val (rollNo, dept) = studentMetaMap[sId] ?: Pair(0, "")
+                val (rollNo, dept) = studentMetaMap[sId] ?: Pair("", "")
                 val verified = verifiedStatusMap[sId] ?: 1
 
                 if (db.userDao().getUserById(sId) == null) {
@@ -469,7 +472,10 @@ object CloudSyncManager {
             }
             executeRequest("/rest/v1/attendance_records?on_conflict=session_id,student_id", "POST", recordsArray.toString(), mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "uploadAttendanceSession failed", e)
+            false
+        }
     }
 
     suspend fun updateSingleAttendanceRecord(sessionId: String, studentId: String, isPresent: Boolean): Boolean = withContext(Dispatchers.IO) {
@@ -857,7 +863,7 @@ object CloudSyncManager {
                     email = localStudent?.email ?: sess?.userEmail ?: "",
                     fullName = localStudent?.fullName ?: sess?.userName ?: "Student",
                     role = "STUDENT",
-                    rollOrSubject = (localStudent?.rollNumber ?: 0).toString(),
+                    rollOrSubject = localStudent?.rollNumber ?: "",
                     sectionOrDept = localStudent?.classSection ?: ""
                 )
             }
@@ -996,7 +1002,10 @@ object CloudSyncManager {
                 "DELETE"
             )
             code in 200..299
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "deleteStudentFaceEmbeddings failed", e)
+            false
+        }
     }
 
     suspend fun uploadStudentProfile(
@@ -1004,7 +1013,7 @@ object CloudSyncManager {
         embeddingsWithAngles: List<Triple<String, FloatArray, Int>>
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            ensureCloudUserProfile(student.studentId, student.email, student.fullName, "STUDENT", student.rollNumber.toString(), student.classSection ?: "")
+            ensureCloudUserProfile(student.studentId, student.email, student.fullName, "STUDENT", student.rollNumber, student.classSection ?: "")
             val converters = VectorTypeConverters()
 
             // Delete old cloud embeddings for this student to ensure a fresh set

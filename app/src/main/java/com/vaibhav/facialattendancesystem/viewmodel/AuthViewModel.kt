@@ -124,7 +124,7 @@ class AuthViewModel(
                             student = Student(
                                 studentId = localUser.userId,
                                 userId = localUser.userId,
-                                rollNumber = authResult.rollOrSubject.toIntOrNull() ?: 0,
+                                rollNumber = authResult.rollOrSubject,
                                 fullName = authResult.fullName,
                                 email = authResult.email,
                                 classSection = authResult.sectionOrDept.ifBlank { null }
@@ -155,7 +155,7 @@ class AuthViewModel(
                                 email = localUser.email,
                                 fullName = student.fullName,
                                 role = "STUDENT",
-                                rollOrSubject = student.rollNumber.toString(),
+                                rollOrSubject = student.rollNumber,
                                 sectionOrDept = student.classSection ?: ""
                             )
                             CloudSyncManager.syncStudentClassesAndEnrollments(student.studentId, db, sessionManager)
@@ -198,7 +198,7 @@ class AuthViewModel(
 
     fun signUpStudent(
         name: String,
-        rollNo: Int,
+        rollNo: String,
         email: String,
         password: String,
         section: String,
@@ -214,7 +214,7 @@ class AuthViewModel(
                 password = password,
                 fullName = name,
                 role = "STUDENT",
-                rollOrSubject = rollNo.toString(),
+                rollOrSubject = rollNo,
                 sectionOrDept = section
             )
             when (authResult) {
@@ -245,7 +245,7 @@ class AuthViewModel(
                         email = email,
                         fullName = name,
                         role = "STUDENT",
-                        rollOrSubject = rollNo.toString(),
+                        rollOrSubject = rollNo,
                         sectionOrDept = section
                     )
                     withContext(Dispatchers.Main) {

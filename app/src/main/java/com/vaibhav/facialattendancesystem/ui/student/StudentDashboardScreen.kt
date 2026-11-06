@@ -475,7 +475,7 @@ fun AttendanceRing(fraction: Float, pct: Int) {
 @Composable
 fun StudentSidebarContent(
     name: String,
-    rollNumber: Int,
+    rollNumber: String,
     initials: String,
     profileBitmap: Bitmap? = null,
     borderColor: Color,
@@ -611,7 +611,7 @@ fun JoinClassDialog(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Characters,
-                        autoCorrect = false
+                        autoCorrectEnabled = false
                     ),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     shape = RoundedCornerShape(10.dp),

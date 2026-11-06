@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AttendanceRecord::class,
         RecognitionLog::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 
@@ -90,6 +90,42 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * MIGRATION 9→10: Change roll_number column from INTEGER to TEXT.
+         *
+         * SQLite cannot change column types directly, so we:
+         * 1. Rename the old table to a temp name.
+         * 2. Create a new table with roll_number as TEXT.
+         * 3. Copy all data, casting the old INTEGER roll_number to TEXT.
+         * 4. Drop the old temp table.
+         *
+         * This allows alphanumeric roll numbers like "22CS041" or "007".
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // SQLite cannot change column types directly.
+                // Create new table with roll_number as TEXT, copy data, replace.
+                db.execSQL("ALTER TABLE students RENAME TO students_old")
+                db.execSQL("""
+                    CREATE TABLE students (
+                        student_id TEXT NOT NULL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        roll_number TEXT NOT NULL DEFAULT '',
+                        full_name TEXT NOT NULL,
+                        email TEXT NOT NULL,
+                        class_section TEXT,
+                        enrollment_status INTEGER NOT NULL DEFAULT 0,
+                        enrollment_date INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                    )
+                """)
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_students_user_id ON students (user_id)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_students_email ON students (email)")
+                db.execSQL("INSERT INTO students SELECT student_id, user_id, CAST(roll_number AS TEXT), full_name, email, class_section, enrollment_status, enrollment_date FROM students_old")
+                db.execSQL("DROP TABLE students_old")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -103,7 +139,8 @@ abstract class AppDatabase : RoomDatabase() {
                             db.execSQL("PRAGMA foreign_keys = ON;")
                         }
                     })
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                    .fallbackToDestructiveMigrationFrom(1, 2, 3, 4, 5, 6)
                     .build()
                 INSTANCE = instance
                 instance
