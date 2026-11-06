@@ -104,25 +104,26 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // SQLite cannot change column types directly.
-                // Create new table with roll_number as TEXT, copy data, replace.
-                db.execSQL("ALTER TABLE students RENAME TO students_old")
+                // Create new table matching Room 10.json schema exactly, copy data, replace.
+                db.execSQL("ALTER TABLE `students` RENAME TO `students_old`")
                 db.execSQL("""
-                    CREATE TABLE students (
-                        student_id TEXT NOT NULL PRIMARY KEY,
-                        user_id TEXT NOT NULL,
-                        roll_number TEXT NOT NULL DEFAULT '',
-                        full_name TEXT NOT NULL,
-                        email TEXT NOT NULL,
-                        class_section TEXT,
-                        enrollment_status INTEGER NOT NULL DEFAULT 0,
-                        enrollment_date INTEGER NOT NULL DEFAULT 0,
-                        FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                    CREATE TABLE IF NOT EXISTS `students` (
+                        `student_id` TEXT NOT NULL,
+                        `user_id` TEXT NOT NULL,
+                        `roll_number` TEXT NOT NULL,
+                        `full_name` TEXT NOT NULL,
+                        `email` TEXT NOT NULL,
+                        `class_section` TEXT,
+                        `enrollment_status` INTEGER NOT NULL,
+                        `enrollment_date` INTEGER NOT NULL,
+                        PRIMARY KEY(`student_id`),
+                        FOREIGN KEY(`user_id`) REFERENCES `users`(`user_id`) ON UPDATE NO ACTION ON DELETE CASCADE
                     )
-                """)
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_students_user_id ON students (user_id)")
-                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_students_email ON students (email)")
-                db.execSQL("INSERT INTO students SELECT student_id, user_id, CAST(roll_number AS TEXT), full_name, email, class_section, enrollment_status, enrollment_date FROM students_old")
-                db.execSQL("DROP TABLE students_old")
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_students_user_id` ON `students` (`user_id`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_students_email` ON `students` (`email`)")
+                db.execSQL("INSERT INTO `students` (`student_id`, `user_id`, `roll_number`, `full_name`, `email`, `class_section`, `enrollment_status`, `enrollment_date`) SELECT `student_id`, `user_id`, CAST(`roll_number` AS TEXT), `full_name`, `email`, `class_section`, `enrollment_status`, `enrollment_date` FROM `students_old`")
+                db.execSQL("DROP TABLE `students_old`")
             }
         }
 
