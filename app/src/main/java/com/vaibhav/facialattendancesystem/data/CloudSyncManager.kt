@@ -1448,15 +1448,20 @@ object CloudSyncManager {
             var currentUrl = downloadUrl
             var connection: HttpURLConnection? = null
             var redirects = 0
-            while (redirects < 5) {
+            while (redirects < 10) {
                 val url = URL(currentUrl)
                 connection = url.openConnection() as HttpURLConnection
                 connection.instanceFollowRedirects = false
-                connection.connectTimeout = 15000
-                connection.readTimeout = 30000
+                connection.connectTimeout = 20_000
+                // 90s read timeout — large APKs on slow connections need headroom.
+                // The previous 30s fired during the final flush on the main thread dispatch cycle.
+                connection.readTimeout = 90_000
                 connection.setRequestProperty("User-Agent", "SwiffMark-Android")
                 val code = connection.responseCode
-                if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP || code == 307 || code == 308) {
+                if (code == HttpURLConnection.HTTP_MOVED_PERM ||
+                    code == HttpURLConnection.HTTP_MOVED_TEMP ||
+                    code == 307 || code == 308
+                ) {
                     val loc = connection.getHeaderField("Location") ?: break
                     connection.disconnect()
                     currentUrl = loc
@@ -1470,27 +1475,37 @@ object CloudSyncManager {
             }
 
             val conn = connection ?: return@withContext null
-            val fileLength = conn.contentLength.coerceAtLeast(1)
+            val fileLength = conn.contentLengthLong.coerceAtLeast(1L)
             val updatesDir = java.io.File(context.cacheDir, "updates").apply { mkdirs() }
             val apkFile = java.io.File(updatesDir, "swiffmark-update.apk")
             if (apkFile.exists()) apkFile.delete()
 
+            // Report progress every 512 KB instead of every 8 KB chunk.
+            // 18,700 main-thread dispatches for a 146 MB file caused severe IO latency
+            // that tripped the old 30s read timeout and left the download stuck at 100%.
+            val reportEveryBytes = 512 * 1024L
+            var lastReported = 0L
+
             conn.inputStream.use { input ->
                 java.io.FileOutputStream(apkFile).use { output ->
-                    val buffer = ByteArray(8192)
+                    val buffer = ByteArray(32_768)
                     var total = 0L
                     var count: Int
                     while (input.read(buffer).also { count = it } != -1) {
                         total += count
                         output.write(buffer, 0, count)
-                        val progress = (total.toFloat() / fileLength.toFloat()).coerceIn(0f, 1f)
-                        withContext(Dispatchers.Main) {
-                            onProgress(progress)
+                        if (total - lastReported >= reportEveryBytes) {
+                            lastReported = total
+                            val progress = (total.toFloat() / fileLength.toFloat()).coerceIn(0f, 0.99f)
+                            withContext(Dispatchers.Main) { onProgress(progress) }
                         }
                     }
+                    output.flush()
                 }
             }
             conn.disconnect()
+            // Always fire 100% after the stream is fully flushed and closed.
+            withContext(Dispatchers.Main) { onProgress(1f) }
             apkFile
         } catch (e: Exception) {
             e.printStackTrace()
