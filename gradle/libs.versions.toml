@@ -19,7 +19,10 @@ navigationCompose = "2.8.5"
 work = "2.10.0"
 ksp = "2.0.21-1.0.27"
 
+securityCrypto = "1.1.0-alpha06"
+
 [libraries]
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

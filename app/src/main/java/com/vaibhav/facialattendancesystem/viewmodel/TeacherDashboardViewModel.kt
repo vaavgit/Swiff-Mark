@@ -25,12 +25,24 @@ class TeacherDashboardViewModel(
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
-    fun startInitialSync(teacherId: String) {
+    /**
+     * Runs a continuous sync loop for the teacher dashboard.
+     * First sync fires immediately.
+     * Subsequent syncs run every 15 seconds.
+     * The loop is cancelled automatically when the ViewModel is cleared.
+     */
+    fun startSyncLoop(teacherId: String) {
         if (teacherId.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             _isSyncing.value = true
             CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
             _isSyncing.value = false
+            while (true) {
+                kotlinx.coroutines.delay(15_000L)
+                if (!_isSyncing.value && teacherId.isNotBlank()) {
+                    CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
+                }
+            }
         }
     }
 

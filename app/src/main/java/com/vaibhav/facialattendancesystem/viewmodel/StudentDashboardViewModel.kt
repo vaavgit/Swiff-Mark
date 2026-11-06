@@ -52,13 +52,26 @@ class StudentDashboardViewModel(
         }
     }
 
-    fun startInitialSync(studentId: String) {
+    /**
+     * Runs a continuous sync loop for the student dashboard.
+     * First sync fires immediately (notify = false to avoid stale alerts on first load).
+     * Subsequent syncs run every 8 seconds with notify = true.
+     * The loop is cancelled automatically when the ViewModel is cleared (screen leaves composition).
+     */
+    fun startSyncLoop(studentId: String) {
         if (studentId.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             _isSyncing.value = true
             CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
             CloudSyncManager.syncStudentAttendance(studentId, db, null, notify = false)
             _isSyncing.value = false
+            while (true) {
+                kotlinx.coroutines.delay(8_000L)
+                if (!_isSyncing.value) {
+                    CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
+                    CloudSyncManager.syncStudentAttendance(studentId, db, null, notify = true)
+                }
+            }
         }
     }
 

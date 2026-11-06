@@ -20,6 +20,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vaibhav.facialattendancesystem.viewmodel.AppViewModelFactory
+import com.vaibhav.facialattendancesystem.viewmodel.AuthViewModel
+import com.vaibhav.facialattendancesystem.viewmodel.AttendanceViewModel
+import com.vaibhav.facialattendancesystem.viewmodel.ClassDetailsViewModel
+import com.vaibhav.facialattendancesystem.viewmodel.StudentDashboardViewModel
+import com.vaibhav.facialattendancesystem.viewmodel.TeacherDashboardViewModel
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -184,8 +192,9 @@ fun AppNavigation(
     }
 
     var isDarkTheme by remember { mutableStateOf(sessionManager.isDarkTheme()) }
-    var authError by remember { mutableStateOf<String?>(null) }
-    var isLoading by remember { mutableStateOf(false) }
+    val authViewModel: AuthViewModel = viewModel(factory = AppViewModelFactory(db, sessionManager))
+    val isLoading by authViewModel.isLoading.collectAsStateWithLifecycle()
+    val authError by authViewModel.authError.collectAsStateWithLifecycle()
     var bannerData by remember { mutableStateOf<BannerData?>(null) }
 
     val showBanner: (String, Boolean) -> Unit = { message, isError ->
@@ -254,173 +263,40 @@ fun AppNavigation(
                     initialIsTeacher = sessionManager.getSavedIsTeacher(),
                     initialSaveLogin = sessionManager.isSaveLoginEnabled(),
                     onLoginClick = { email, password, isTeacher, saveLogin ->
-                        isLoading = true
-                        authError = null
-                        scope.launch(Dispatchers.IO) {
-                            // 1. Authenticate with official Supabase GoTrue Auth
-                            val authResult = SupabaseAuthManager.signInWithPassword(email, password)
-                            when (authResult) {
-                                is AuthResult.Success -> {
-                                    val roleUpper = authResult.role.uppercase()
-                                    if (isTeacher && roleUpper != "TEACHER") {
-                                        withContext(Dispatchers.Main) {
-                                            isLoading = false
-                                            authError = "This account is a Student account. Please select Student Portal."
-                                        }
-                                        return@launch
-                                    }
-                                    if (!isTeacher && roleUpper == "TEACHER") {
-                                        withContext(Dispatchers.Main) {
-                                            isLoading = false
-                                            authError = "This account is a Teacher account. Please select Teacher Portal."
-                                        }
-                                        return@launch
-                                    }
-
-                                    // Save credentials if user opted to save login info
-                                    sessionManager.saveLoginCredentials(email, isTeacher, saveLogin)
-
-                                    // Set token on CloudSyncManager so all subsequent cloud REST calls authenticate
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
-
-                                    // Check or insert User record in local Room DB keyed by Supabase UUID
-                                    var localUser = db.userDao().getUserByEmail(email)
-                                    if (localUser == null) {
-                                        localUser = User(
-                                            userId = authResult.userId,
-                                            email = authResult.email,
-                                            passwordHash = "",
-                                            userType = roleUpper,
-                                            name = authResult.fullName
-                                        )
-                                        db.userDao().insertUser(localUser)
-                                    }
-
-                                    if (isTeacher) {
-                                        var teacher = db.teacherDao().getTeacherByUserId(localUser.userId)
-                                        if (teacher == null) {
-                                            teacher = Teacher(
-                                                teacherId = localUser.userId,
-                                                userId = localUser.userId,
-                                                subject = authResult.rollOrSubject.ifBlank { "Subject" },
-                                                department = authResult.sectionOrDept.ifBlank { "Dept" }
-                                            )
-                                            db.teacherDao().insertTeacher(teacher)
-                                        }
-                                        sessionManager.saveSession(teacher.teacherId, localUser.name, "TEACHER", localUser.email, authResult.accessToken, authResult.refreshToken)
-                                        // Ensure profile exists in Supabase and pull all teacher classes & rosters
-                                        scope.launch(Dispatchers.IO) {
-                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
-                                                userId = teacher.teacherId,
-                                                email = localUser.email,
-                                                fullName = localUser.name,
-                                                role = "TEACHER",
-                                                rollOrSubject = teacher.subject,
-                                                sectionOrDept = teacher.department ?: ""
-                                            )
-                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacher.teacherId, db, sessionManager)
-                                        }
-                                        withContext(Dispatchers.Main) {
-                                            isLoading = false
-                                            showBanner("Welcome back, ${localUser.name}!", false)
-                                            navController.navigate(Screen.TeacherDashboard.createRoute(teacher.teacherId, localUser.name)) {
-                                                popUpTo(0)
-                                            }
-                                        }
-                                    } else {
-                                        var student = db.studentDao().getStudentByUserId(localUser.userId)
-                                        if (student == null) {
-                                            student = Student(
-                                                studentId = localUser.userId,
-                                                userId = localUser.userId,
-                                                rollNumber = authResult.rollOrSubject.toIntOrNull() ?: 0,
-                                                fullName = authResult.fullName,
-                                                email = authResult.email,
-                                                classSection = authResult.sectionOrDept.ifBlank { null }
-                                            )
-                                            db.studentDao().insertStudent(student)
-                                        }
-
-                                        // Restore face embeddings from cloud if student profile was enrolled on cloud
-                                        val hasLocalEmbeddings = db.faceEmbeddingDao().getEmbeddingsForStudent(student.studentId).isNotEmpty()
-                                        var isFaceEnrolled = student.enrollmentStatus == 1 || hasLocalEmbeddings
-                                        if (!isFaceEnrolled) {
-                                            val cloudEmbeddingsFound = com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentFaceEmbeddings(student.studentId, db)
-                                            if (cloudEmbeddingsFound) {
-                                                isFaceEnrolled = true
-                                                val updated = student.copy(enrollmentStatus = 1)
-                                                db.studentDao().insertStudent(updated)
-                                                student = updated
-                                            }
-                                        }
-
-                                        sessionManager.saveSession(student.studentId, student.fullName, "STUDENT", localUser.email, authResult.accessToken, authResult.refreshToken)
-
-                                        // Ensure profile exists in Supabase and pull enrolled classes & attendance
-                                        scope.launch(Dispatchers.IO) {
-                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
-                                                userId = student.studentId,
-                                                email = localUser.email,
-                                                fullName = student.fullName,
-                                                role = "STUDENT",
-                                                rollOrSubject = student.rollNumber.toString(),
-                                                sectionOrDept = student.classSection ?: ""
-                                            )
-                                            // Sync classes first so dashboard isn't empty on new device
-                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(student.studentId, db, sessionManager)
-                                            // notify=false on login — notifications should only come from WorkManager background sync
-                                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(student.studentId, db, context, notify = false)
-                                        }
-
-                                        withContext(Dispatchers.Main) {
-                                            isLoading = false
-                                            showBanner("Welcome back, ${student.fullName}!", false)
-                                            if (isFaceEnrolled) {
-                                                navController.navigate(Screen.StudentDashboard.createRoute(student.studentId)) {
-                                                    popUpTo(0)
-                                                }
-                                            } else {
-                                                navController.navigate(Screen.StudentEnrollment.createRoute(student.studentId, student.fullName)) {
-                                                    popUpTo(0)
-                                                }
-                                            }
-                                        }
-                                    }
+                        authViewModel.login(
+                            email = email,
+                            password = password,
+                            isTeacher = isTeacher,
+                            saveLogin = saveLogin,
+                            onNavigateTeacher = { teacherId, name ->
+                                navController.navigate(Screen.TeacherDashboard.createRoute(teacherId, name)) {
+                                    popUpTo(0)
                                 }
-                                is AuthResult.EmailNotConfirmed -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        authError = authResult.message
-                                    }
+                            },
+                            onNavigateStudentDashboard = { studentId ->
+                                navController.navigate(Screen.StudentDashboard.createRoute(studentId)) {
+                                    popUpTo(0)
                                 }
-                                is AuthResult.Error -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        authError = authResult.message
-                                    }
+                            },
+                            onNavigateStudentEnrollment = { studentId, name ->
+                                navController.navigate(Screen.StudentEnrollment.createRoute(studentId, name)) {
+                                    popUpTo(0)
                                 }
-                                else -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                    }
-                                }
-                            }
-                        }
+                            },
+                            onBanner = showBanner
+                        )
                     },
                     onNavigateToSignUp = {
-                        authError = null
+                        authViewModel.clearError()
                         navController.navigate(Screen.SignUp.route)
                     },
                     onForgotPasswordClick = {
-                        authError = null
+                        authViewModel.clearError()
                         navController.navigate(Screen.ForgotPassword.route)
                     },
                     onResendVerificationClick = { unverifiedEmail ->
-                        scope.launch(Dispatchers.IO) {
-                            val (success, resMsg) = SupabaseAuthManager.resendVerificationEmail(unverifiedEmail)
-                            withContext(Dispatchers.Main) {
-                                showBanner(resMsg, !success)
-                            }
+                        authViewModel.resendVerification(unverifiedEmail) { success, resMsg ->
+                            showBanner(resMsg, !success)
                         }
                     },
                     errorMessage = authError,
@@ -431,137 +307,42 @@ fun AppNavigation(
             composable(Screen.SignUp.route) {
                 SignUpScreen(
                     onStudentSignUpClick = { name, rollNo, email, pass, section ->
-                        isLoading = true
-                        authError = null
-                        scope.launch(Dispatchers.IO) {
-                            val authResult = SupabaseAuthManager.signUp(
-                                email = email,
-                                password = pass,
-                                fullName = name,
-                                role = "STUDENT",
-                                rollOrSubject = rollNo.toString(),
-                                sectionOrDept = section
-                            )
-                            when (authResult) {
-                                is AuthResult.NeedsEmailConfirmation -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        showBanner("Verification email sent to $email! Please verify before logging in.", false)
-                                        navController.navigate(Screen.Login.route) {
-                                            popUpTo(Screen.SignUp.route) { inclusive = true }
-                                        }
-                                    }
+                        authViewModel.signUpStudent(
+                            name = name,
+                            rollNo = rollNo,
+                            email = email,
+                            password = pass,
+                            section = section,
+                            onNavigateToLogin = {
+                                navController.navigate(Screen.Login.route) {
+                                    popUpTo(Screen.SignUp.route) { inclusive = true }
                                 }
-                                is AuthResult.Success -> {
-                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = "", userType = "STUDENT", name = name)
-                                    db.userDao().insertUser(newUser)
-                                    val student = Student(
-                                        studentId = authResult.userId,
-                                        userId = authResult.userId,
-                                        rollNumber = rollNo,
-                                        fullName = name,
-                                        email = email,
-                                        classSection = section
-                                    )
-                                    db.studentDao().insertStudent(student)
-                                    sessionManager.saveSession(student.studentId, name, "STUDENT", email, authResult.accessToken, authResult.refreshToken)
-                                    sessionManager.saveLoginCredentials(email, false, true)
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
-                                        userId = student.studentId,
-                                        email = email,
-                                        fullName = name,
-                                        role = "STUDENT",
-                                        rollOrSubject = rollNo.toString(),
-                                        sectionOrDept = section
-                                    )
-
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        showBanner("Account created! Position face in oval to enroll.", false)
-                                        navController.navigate(Screen.StudentEnrollment.createRoute(student.studentId, name))
-                                    }
-                                }
-                                is AuthResult.Error -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        authError = authResult.message
-                                    }
-                                }
-                                else -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                    }
-                                }
-                            }
-                        }
+                            },
+                            onNavigateToEnrollment = { studentId, studentName ->
+                                navController.navigate(Screen.StudentEnrollment.createRoute(studentId, studentName))
+                            },
+                            onBanner = showBanner
+                        )
                     },
                     onTeacherSignUpClick = { name, department, email, pass ->
-                        isLoading = true
-                        authError = null
-                        scope.launch(Dispatchers.IO) {
-                            val authResult = SupabaseAuthManager.signUp(
-                                email = email,
-                                password = pass,
-                                fullName = name,
-                                role = "TEACHER",
-                                rollOrSubject = "Faculty",
-                                sectionOrDept = department
-                            )
-                            when (authResult) {
-                                is AuthResult.NeedsEmailConfirmation -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        showBanner("Verification email sent to $email! Please verify before logging in.", false)
-                                        navController.navigate(Screen.Login.route) {
-                                            popUpTo(Screen.SignUp.route) { inclusive = true }
-                                        }
-                                    }
+                        authViewModel.signUpTeacher(
+                            name = name,
+                            department = department,
+                            email = email,
+                            password = pass,
+                            onNavigateToLogin = {
+                                navController.navigate(Screen.Login.route) {
+                                    popUpTo(Screen.SignUp.route) { inclusive = true }
                                 }
-                                is AuthResult.Success -> {
-                                    val newUser = User(userId = authResult.userId, email = email, passwordHash = "", userType = "TEACHER", name = name)
-                                    db.userDao().insertUser(newUser)
-                                    val teacher = Teacher(
-                                        teacherId = authResult.userId,
-                                        userId = authResult.userId,
-                                        subject = "",
-                                        department = department
-                                    )
-                                    db.teacherDao().insertTeacher(teacher)
-                                    sessionManager.saveSession(teacher.teacherId, name, "TEACHER", email, authResult.accessToken, authResult.refreshToken)
-                                    sessionManager.saveLoginCredentials(email, true, true)
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.setAuthToken(authResult.accessToken)
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.ensureCloudUserProfile(
-                                        userId = teacher.teacherId,
-                                        email = email,
-                                        fullName = name,
-                                        role = "TEACHER",
-                                        rollOrSubject = "Faculty",
-                                        sectionOrDept = department
-                                    )
-
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        showBanner("Teacher account created!", false)
-                                        navController.navigate(Screen.TeacherDashboard.createRoute(teacher.teacherId, name))
-                                    }
-                                }
-                                is AuthResult.Error -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                        authError = authResult.message
-                                    }
-                                }
-                                else -> {
-                                    withContext(Dispatchers.Main) {
-                                        isLoading = false
-                                    }
-                                }
-                            }
-                        }
+                            },
+                            onNavigateToTeacherDashboard = { teacherId, teacherName ->
+                                navController.navigate(Screen.TeacherDashboard.createRoute(teacherId, teacherName))
+                            },
+                            onBanner = showBanner
+                        )
                     },
                     onNavigateToLogin = {
-                        authError = null
+                        authViewModel.clearError()
                         navController.navigate(Screen.Login.route)
                     },
                     errorMessage = authError,
@@ -578,13 +359,10 @@ fun AppNavigation(
                     onSendResetLink = { email ->
                         forgotLoading = true
                         forgotMsg = null
-                        scope.launch(Dispatchers.IO) {
-                            val (ok, msg) = SupabaseAuthManager.resetPasswordForEmail(email)
-                            withContext(Dispatchers.Main) {
-                                forgotLoading = false
-                                forgotMsg = msg
-                                forgotIsError = !ok
-                            }
+                        authViewModel.sendResetEmail(email) { ok, msg ->
+                            forgotLoading = false
+                            forgotMsg = msg
+                            forgotIsError = !ok
                         }
                     },
                     onBackToLogin = { navController.navigate(Screen.Login.route) },
@@ -620,17 +398,14 @@ fun AppNavigation(
                     onResetPasswordSubmit = { token, newPassword ->
                         resetLoading = true
                         resetMsg = null
-                        scope.launch(Dispatchers.IO) {
-                            val (ok, msg) = SupabaseAuthManager.updateUserPassword(token, newPassword)
-                            withContext(Dispatchers.Main) {
-                                resetLoading = false
-                                resetMsg = msg
-                                resetIsError = !ok
-                                if (ok) {
-                                    showBanner("Password updated successfully! Please log in with your new password.", false)
-                                    navController.navigate(Screen.Login.route) {
-                                        popUpTo(0)
-                                    }
+                        authViewModel.resetPassword(token, newPassword) { ok, msg ->
+                            resetLoading = false
+                            resetMsg = msg
+                            resetIsError = !ok
+                            if (ok) {
+                                showBanner("Password updated successfully! Please log in with your new password.", false)
+                                navController.navigate(Screen.Login.route) {
+                                    popUpTo(0)
                                 }
                             }
                         }
@@ -776,35 +551,22 @@ fun AppNavigation(
                 val attendanceFeedFlow = remember(studentId) { db.attendanceDao().getAttendanceFeedForStudent(studentId) }
                 val attendanceFeed by attendanceFeedFlow.collectAsState(initial = emptyList())
 
-                var isSyncing by remember { mutableStateOf(false) }
+                val studentDashboardViewModel: StudentDashboardViewModel = viewModel(
+                    factory = AppViewModelFactory(db, sessionManager)
+                )
+                val isSyncing by studentDashboardViewModel.isSyncing.collectAsStateWithLifecycle()
 
-                // Initial baseline sync on screen entry + continuous 8s background auto-sync while dashboard is open
+                // Kick off the continuous background sync loop — cancelled automatically when VM is cleared.
                 LaunchedEffect(studentId) {
-                    if (studentId.isNotBlank()) {
-                        isSyncing = true
-                        com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                        // Baseline sync: notify = false so we establish baseline without sound/banner for already existing lectures
-                        com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context, notify = false)
-                        isSyncing = false
-                        while (true) {
-                            kotlinx.coroutines.delay(8_000L) // Fast 8s interval for immediate notification delivery
-                            if (!isSyncing) {
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context, notify = true)
-                            }
-                        }
-                    }
+                    studentDashboardViewModel.startSyncLoop(studentId)
                 }
 
-                // Auto-sync every time the screen is RESUMED (e.g. user returns from class detail screen or background).
+                // Extra sync on every ON_RESUME (user returns from another screen or background).
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner, studentId) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME && studentId.isNotBlank() && !isSyncing) {
-                            scope.launch(Dispatchers.IO) {
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context, notify = true)
-                            }
+                            studentDashboardViewModel.syncOnResume(studentId)
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
@@ -830,29 +592,16 @@ fun AppNavigation(
                         teacherUserIds = teacherUserIds,
                         isSyncing = isSyncing,
                         onRefreshCloud = {
-                            scope.launch(Dispatchers.IO) {
-                                isSyncing = true
-                                val (cSynced, cMsg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                                val (synced, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
-                                withContext(Dispatchers.Main) {
-                                    isSyncing = false
-                                    showBanner(if (synced || cSynced) "✓ Refreshed enrolled classes & attendance" else msg, !synced && !cSynced)
-                                }
+                            studentDashboardViewModel.refreshCloud(studentId) { synced, msg ->
+                                showBanner(if (synced) "Refreshed enrolled classes & attendance" else msg, !synced)
                             }
                         },
                         onJoinClassByCode = { code ->
-                            scope.launch(Dispatchers.IO) {
-                                val (success, message) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.joinClassByCode(code, studentId, db, sessionManager)
+                            studentDashboardViewModel.joinClass(code, studentId) { success, message ->
                                 if (success) {
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentClassesAndEnrollments(studentId, db, sessionManager)
-                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncStudentAttendance(studentId, db, context)
-                                }
-                                withContext(Dispatchers.Main) {
-                                    if (success) {
-                                        showBanner("✓ Joined $message!", false)
-                                    } else {
-                                        showBanner(message, true)
-                                    }
+                                    showBanner("Joined $message!", false)
+                                } else {
+                                    showBanner(message, true)
                                 }
                             }
                         },
@@ -946,7 +695,10 @@ fun AppNavigation(
                 val user by userFlow.collectAsState(initial = null)
                 val effectiveTeacherName = user?.name?.ifBlank { null } ?: sessionManager.getSession()?.userName?.ifBlank { null } ?: teacherNameParam
 
-                var isSyncing by remember { mutableStateOf(false) }
+                val teacherDashboardViewModel: TeacherDashboardViewModel = viewModel(
+                    factory = AppViewModelFactory(db, sessionManager)
+                )
+                val isSyncing by teacherDashboardViewModel.isSyncing.collectAsStateWithLifecycle()
 
                 val classesFlow = remember(teacherId) { db.clazzDao().getClassesForTeacher(teacherId) }
                 val classes by classesFlow.collectAsState(initial = emptyList())
@@ -977,28 +729,17 @@ fun AppNavigation(
                     }
                 }
 
-                // Auto-sync teacher classes and rosters when opening dashboard + every 15s in background
+                // Kick off the continuous background sync loop — cancelled automatically when VM is cleared.
                 LaunchedEffect(teacherId) {
-                    isSyncing = true
-                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
-                    isSyncing = false
-                    while (true) {
-                        kotlinx.coroutines.delay(15_000L)
-                        if (!isSyncing && teacherId.isNotBlank()) {
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
-                        }
-                    }
+                    teacherDashboardViewModel.startSyncLoop(teacherId)
                 }
 
-                // Auto-sync every time teacher returns to dashboard (e.g. from class details).
-                // Keeps pending enrollment requests and roster changes up to date automatically.
+                // Extra sync on every ON_RESUME (user returns from class details or background).
                 val teacherLifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(teacherLifecycleOwner, teacherId) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME && teacherId.isNotBlank() && !isSyncing) {
-                            scope.launch(Dispatchers.IO) {
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
-                            }
+                            teacherDashboardViewModel.syncOnResume(teacherId)
                         }
                     }
                     teacherLifecycleOwner.lifecycle.addObserver(observer)
@@ -1016,40 +757,14 @@ fun AppNavigation(
                     isSyncing = isSyncing,
                     unsyncedSessionsCount = unsyncedSessionsCount,
                     onRefreshCloud = {
-                        scope.launch(Dispatchers.IO) {
-                            isSyncing = true
-                            // Upload any pending offline sessions first
-                            val pendingSessions = db.attendanceDao().getUnsyncedSessions()
-                            for (session in pendingSessions) {
-                                val records = db.attendanceDao().getRecordsForSession(session.sessionId)
-                                val success = com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadAttendanceSession(session, records, teacherId)
-                                if (success) {
-                                    db.attendanceDao().markSessionSynced(session.sessionId)
-                                }
-                            }
-                            val (synced, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncTeacherAllClassesAndRosters(teacherId, db, sessionManager)
-                            withContext(Dispatchers.Main) {
-                                isSyncing = false
-                                showBanner(msg, !synced)
-                            }
+                        teacherDashboardViewModel.refreshCloud(teacherId) { synced, msg ->
+                            showBanner(msg, !synced)
                         }
                     },
                     onCreateClass = { className, subject, semester, section ->
-                        scope.launch(Dispatchers.IO) {
-                            val code = generateClassCode(subject)
-                            val newClass = Clazz(
-                                teacherId = teacherId,
-                                className = className,
-                                subject = subject,
-                                semester = semester,
-                                section = section,
-                                classCode = code
-                            )
-                            db.clazzDao().insertClass(newClass)
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadNewClass(newClass)
-                            withContext(Dispatchers.Main) {
-                                showBanner("Class created! Code: $code", false)
-                            }
+                        val code = generateClassCode(subject)
+                        teacherDashboardViewModel.createClass(teacherId, className, subject, semester, section, code) { _, msg ->
+                            showBanner(msg, false)
                         }
                     },
                     onMarkAttendance = { classId ->
@@ -1065,11 +780,8 @@ fun AppNavigation(
                         navController.navigate(Screen.TeacherProfile.createRoute(teacherId, effectiveTeacherName))
                     },
                     onDeleteClass = { classId ->
-                        scope.launch(Dispatchers.IO) {
-                            val (success, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.deleteClass(classId, teacherId, db, sessionManager)
-                            withContext(Dispatchers.Main) {
-                                showBanner(if (success) "✓ Class deleted successfully" else msg, !success)
-                            }
+                        teacherDashboardViewModel.deleteClass(classId, teacherId) { success, msg ->
+                            showBanner(if (success) "Class deleted successfully" else msg, !success)
                         }
                     },
                     onLogout = handleLogout
@@ -1162,10 +874,14 @@ fun AppNavigation(
             composable(Screen.ClassDetails.route) { backStack ->
                 val classId = backStack.arguments?.getString("classId") ?: ""
 
-                var clazz by remember { mutableStateOf<Clazz?>(null) }
-                var enrolledStudents by remember { mutableStateOf<List<Student>>(emptyList()) }
-                var isSyncingRoster by remember { mutableStateOf(false) }
-                var isLoadingData by remember { mutableStateOf(true) }
+                val classDetailsViewModel: ClassDetailsViewModel = viewModel(
+                    factory = AppViewModelFactory(db, sessionManager)
+                )
+                val clazz by classDetailsViewModel.clazz.collectAsStateWithLifecycle()
+                val enrolledStudents by classDetailsViewModel.enrolledStudents.collectAsStateWithLifecycle()
+                val pendingStudents by classDetailsViewModel.pendingStudents.collectAsStateWithLifecycle()
+                val isSyncingRoster by classDetailsViewModel.isSyncingRoster.collectAsStateWithLifecycle()
+                val isLoadingData by classDetailsViewModel.isLoadingData.collectAsStateWithLifecycle()
 
                 val classRecordsFlow = remember(classId) { db.attendanceDao().getAllRecordsForClass(classId) }
                 val classRecords by classRecordsFlow.collectAsState(initial = emptyList())
@@ -1173,36 +889,8 @@ fun AppNavigation(
                 val classSessionsFlow = remember(classId) { db.attendanceDao().getSessionsForClass(classId) }
                 val classSessions by classSessionsFlow.collectAsState(initial = emptyList())
 
-                val refreshLocal: suspend () -> Unit = {
-                    withContext(Dispatchers.IO) {
-                        val c = db.clazzDao().getClassById(classId)
-                        // Only show APPROVED students in the main roster
-                        val enrolledIds = db.classEnrollmentDao().getApprovedStudentIds(classId)
-                        val students = if (enrolledIds.isNotEmpty()) db.studentDao().getStudentsByIds(enrolledIds) else emptyList()
-                        withContext(Dispatchers.Main) {
-                            clazz = c
-                            enrolledStudents = students
-                            isLoadingData = false
-                        }
-                    }
-                }
-
                 LaunchedEffect(classId) {
-                    withContext(Dispatchers.IO) {
-                        try {
-                            refreshLocal()
-                            withContext(Dispatchers.Main) { isSyncingRoster = true }
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncClassRosterForTeacher(classId, db)
-                            refreshLocal()
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        } finally {
-                            withContext(Dispatchers.Main) {
-                                isSyncingRoster = false
-                                isLoadingData = false
-                            }
-                        }
-                    }
+                    classDetailsViewModel.loadAndSync(classId)
                 }
 
                 // Live flow of pending join requests for this class
@@ -1211,14 +899,9 @@ fun AppNavigation(
                 }
                 val pendingEnrollments by pendingEnrollmentsFlow.collectAsState(initial = emptyList())
 
-                // Resolve student objects for pending enrollments
-                var pendingStudents by remember { mutableStateOf<List<Student>>(emptyList()) }
+                // Resolve student objects for pending enrollments through ViewModel
                 LaunchedEffect(pendingEnrollments) {
-                    withContext(Dispatchers.IO) {
-                        val ids = pendingEnrollments.map { it.studentId }
-                        val students = if (ids.isNotEmpty()) db.studentDao().getStudentsByIds(ids) else emptyList()
-                        withContext(Dispatchers.Main) { pendingStudents = students }
-                    }
+                    classDetailsViewModel.refreshPendingStudents(classId, pendingEnrollments.map { it.studentId })
                 }
 
                 if (clazz != null) {
@@ -1233,58 +916,34 @@ fun AppNavigation(
                             navController.navigate(Screen.ClassroomAttendance.createRoute(clazz!!.classId, clazz!!.className))
                         },
                         onRefresh = {
-                            scope.launch(Dispatchers.IO) {
-                                withContext(Dispatchers.Main) { isSyncingRoster = true }
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncClassRosterForTeacher(clazz!!.classId, db)
-                                refreshLocal()
-                                withContext(Dispatchers.Main) {
-                                    isSyncingRoster = false
-                                }
-                            }
+                            classDetailsViewModel.refreshRoster(classId)
                         },
                         onApproveStudent = { studentId ->
-                            scope.launch(Dispatchers.IO) {
-                                val (ok, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.approveEnrollment(clazz!!.classId, studentId, db)
-                                refreshLocal()
-                                withContext(Dispatchers.Main) {
-                                    showBanner(if (ok) "✓ Student approved and added to class" else msg, !ok)
-                                }
+                            classDetailsViewModel.approveStudent(classId, studentId) { ok, msg ->
+                                showBanner(if (ok) "Student approved and added to class" else msg, !ok)
                             }
                         },
                         onRejectStudent = { studentId ->
-                            scope.launch(Dispatchers.IO) {
-                                val (ok, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.rejectEnrollment(clazz!!.classId, studentId, db)
-                                withContext(Dispatchers.Main) {
-                                    showBanner(if (ok) "✗ Join request rejected" else msg, !ok)
-                                }
+                            classDetailsViewModel.rejectStudent(classId, studentId) { ok, msg ->
+                                showBanner(if (ok) "Join request rejected" else msg, !ok)
                             }
                         },
                         onResetStudentPassword = { studentEmail, studentName ->
-                            scope.launch(Dispatchers.IO) {
-                                val (ok, msg) = SupabaseAuthManager.resetPasswordForEmail(studentEmail)
-                                withContext(Dispatchers.Main) {
-                                    showBanner(if (ok) "Password reset link sent to $studentName ($studentEmail)!" else msg, !ok)
-                                }
+                            classDetailsViewModel.resetStudentPassword(studentEmail, studentName) { ok, msg ->
+                                showBanner(if (ok) "Password reset link sent to $studentName ($studentEmail)!" else msg, !ok)
                             }
                         },
                         onRemoveStudent = { studentId ->
-                            scope.launch(Dispatchers.IO) {
-                                val (ok, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.leaveClass(clazz!!.classId, studentId, db, sessionManager)
-                                refreshLocal()
-                                withContext(Dispatchers.Main) {
-                                    showBanner(if (ok) "✓ Student removed from class" else msg, !ok)
-                                }
+                            classDetailsViewModel.removeStudent(classId, studentId) { ok, msg ->
+                                showBanner(if (ok) "Student removed from class" else msg, !ok)
                             }
                         },
                         onDeleteClass = { targetClassId ->
                             val teacherId = clazz?.teacherId ?: sessionManager.getSession()?.userId ?: ""
-                            scope.launch(Dispatchers.IO) {
-                                val (success, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.deleteClass(targetClassId, teacherId, db, sessionManager)
-                                withContext(Dispatchers.Main) {
-                                    showBanner(if (success) "✓ Class deleted successfully" else msg, !success)
-                                    if (success) {
-                                        navController.popBackStack()
-                                    }
+                            classDetailsViewModel.deleteClass(targetClassId, teacherId) { success, msg ->
+                                showBanner(if (success) "Class deleted successfully" else msg, !success)
+                                if (success) {
+                                    navController.popBackStack()
                                 }
                             }
                         },
@@ -1333,43 +992,15 @@ fun AppNavigation(
                 // the AttendanceSession that is inserted when the teacher confirms attendance.
                 val sessionId = remember { java.util.UUID.randomUUID().toString() }
 
-                var enrolledStudents by remember { mutableStateOf<List<Student>>(emptyList()) }
-                var allEmbeddingsData by remember { mutableStateOf<List<Pair<Student, List<FloatArray>>>>(emptyList()) }
-                var isLoadingRoster by remember { mutableStateOf(true) }
+                val attendanceViewModel: AttendanceViewModel = viewModel(
+                    factory = AppViewModelFactory(db, sessionManager)
+                )
+                val enrolledStudents by attendanceViewModel.enrolledStudents.collectAsStateWithLifecycle()
+                val allEmbeddingsData by attendanceViewModel.embeddingsData.collectAsStateWithLifecycle()
+                val isLoadingRoster by attendanceViewModel.isLoadingRoster.collectAsStateWithLifecycle()
 
                 LaunchedEffect(classId) {
-                    withContext(Dispatchers.IO) {
-                        try {
-                            // Automatically pull any newly enrolled students and their face embeddings from cloud
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncClassRosterForTeacher(classId, db)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-
-                        val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
-                        val enrolledStudentIds = db.classEnrollmentDao().getApprovedStudentIds(classId)
-                        val students = if (enrolledStudentIds.isNotEmpty()) {
-                            db.studentDao().getStudentsByIds(enrolledStudentIds)
-                        } else {
-                            emptyList()
-                        }
-
-                        val list = mutableListOf<Pair<Student, List<FloatArray>>>()
-                        for (s in students) {
-                            val embs = db.faceEmbeddingDao().getEmbeddingsForStudent(s.studentId)
-                                .filter { it.pipelineVersion >= 2 }
-                                .mapNotNull { converters.byteArrayToFloatArray(it.embeddingVector) }
-                            if (embs.isNotEmpty()) {
-                                list.add(s to embs)
-                            }
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            enrolledStudents = students
-                            allEmbeddingsData = list
-                            isLoadingRoster = false
-                        }
-                    }
+                    attendanceViewModel.loadRosterAndEmbeddings(classId)
                 }
 
                 if (isLoadingRoster) {
@@ -1491,7 +1122,10 @@ fun AppNavigation(
                 }
                 val className = currentClass?.className ?: routeClassName
 
-                var isSyncingSessions by remember { mutableStateOf(false) }
+                val attendanceHistoryViewModel: AttendanceViewModel = viewModel(
+                    factory = AppViewModelFactory(db, sessionManager)
+                )
+                val isSyncingSessions by attendanceHistoryViewModel.isSyncingSessions.collectAsStateWithLifecycle()
 
                 val sessionsFlow = remember(classId) { db.attendanceDao().getSessionsForClass(classId) }
                 val sessions by sessionsFlow.collectAsState(initial = emptyList())
@@ -1502,21 +1136,8 @@ fun AppNavigation(
                 var enrolledStudentsForExport by remember { mutableStateOf<List<com.vaibhav.facialattendancesystem.data.Student>>(emptyList()) }
 
                 val syncSessions: () -> Unit = {
-                    scope.launch(Dispatchers.IO) {
-                        withContext(Dispatchers.Main) { isSyncingSessions = true }
-                        try {
-                            com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncClassRosterForTeacher(classId, db)
-                        } catch (e: Exception) { e.printStackTrace() }
-                        val enrolledIds = db.classEnrollmentDao().getEnrolledStudentIds(classId)
-                        val students = if (enrolledIds.isNotEmpty()) db.studentDao().getStudentsByIds(enrolledIds) else emptyList()
-                        val (synced, msg) = com.vaibhav.facialattendancesystem.data.CloudSyncManager.syncClassAttendanceSessionsForTeacher(classId, db)
-                        withContext(Dispatchers.Main) {
-                            enrolledStudentsForExport = students
-                            isSyncingSessions = false
-                            if (!synced) {
-                                showBanner(msg, true)
-                            }
-                        }
+                    attendanceHistoryViewModel.syncSessions(classId) { synced, msg ->
+                        if (!synced) showBanner(msg, true)
                     }
                 }
 

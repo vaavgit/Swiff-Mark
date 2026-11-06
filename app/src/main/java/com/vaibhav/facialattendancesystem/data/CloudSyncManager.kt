@@ -83,15 +83,24 @@ object CloudSyncManager {
     }
 
     /**
-     * Attempts to silently refresh an expired JWT (401) using:
-     * 1. Saved refresh_token via GoTrue (/auth/v1/token?grant_type=refresh_token)
-     * Returns the new access_token if successful, or null if recovery was not possible.
+     * Attempts to silently refresh an expired JWT (401) using the saved refresh_token.
+     * @Synchronized ensures only one thread executes refresh at a time. If a second thread
+     * enters after the first has already rotated the token, it detects the already-updated
+     * authToken and returns it immediately without consuming the refresh_token a second time.
      */
     @Synchronized
-    private fun recoverFrom401(): String? {
+    private fun recoverFrom401(tokenThatExpired: String? = null): String? {
         val sm = sessionManagerRef ?: return null
 
-        // 1. Try refresh_token rotation first (standard OAuth/GoTrue pattern)
+        // If another thread already refreshed the token while this thread was waiting on the
+        // @Synchronized lock, return the already-refreshed token without a second refresh call.
+        val currentToken = sm.getAccessToken()
+        if (!currentToken.isNullOrBlank() && currentToken != tokenThatExpired) {
+            authToken = currentToken
+            return currentToken
+        }
+
+        // Attempt refresh_token rotation (standard GoTrue OAuth pattern).
         val refreshTok = sm.getRefreshToken()
         if (!refreshTok.isNullOrBlank()) {
             val refreshed = SupabaseAuthManager.refreshSessionBlocking(refreshTok)
@@ -102,7 +111,7 @@ object CloudSyncManager {
             }
         }
 
-        // 2. Clear expired access token so caller handles unauthenticated state gracefully
+        // Recovery failed — clear expired token so the caller handles unauthenticated state.
         sm.updateAccessToken(null)
         authToken = null
         return null
@@ -168,7 +177,8 @@ object CloudSyncManager {
 
         // If 401 Unauthorized (e.g., JWT expired after 1 hour), automatically refresh token / re-authenticate and retry once
         if (statusCode == 401 || (statusCode == 403 && response.contains("JWT", ignoreCase = true))) {
-            val freshToken = recoverFrom401()
+            val expiredToken = sessionManagerRef?.getAccessToken() ?: authToken
+            val freshToken = recoverFrom401(tokenThatExpired = expiredToken)
             if (freshToken.isNullOrBlank()) {
                 // Do NOT fallback to anon key on failed auth recovery; return 401 so caller detects session expiration
                 return Pair(statusCode, response)

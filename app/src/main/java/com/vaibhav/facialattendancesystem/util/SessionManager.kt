@@ -2,6 +2,9 @@ package com.vaibhav.facialattendancesystem.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 data class UserSession(
     val userId: String,
@@ -13,10 +16,43 @@ data class UserSession(
 )
 
 class SessionManager(context: Context) {
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("facial_attendance_session", Context.MODE_PRIVATE)
+
+    /**
+     * Encrypted store for security-sensitive values:
+     * user ID, name, role, email, access token, refresh token.
+     * Backed by Android Keystore AES-256-GCM.
+     *
+     * Note: EncryptedSharedPreferences does not support getStringSet / putStringSet.
+     * Non-sensitive state (notification tracking, left class IDs, theme) lives in
+     * the plain [statePrefs] store below.
+     */
+    private val securePrefs: SharedPreferences = try {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            "swiffmark_secure_session",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        // Fallback to plain prefs if the keystore is unavailable (e.g. some emulators).
+        Log.e("SessionManager", "EncryptedSharedPreferences unavailable, falling back to plain prefs", e)
+        context.getSharedPreferences("swiffmark_secure_session_fallback", Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Plain store for non-sensitive application state.
+     * Holds String sets (notification IDs, left/deleted class IDs) and boolean flags
+     * that EncryptedSharedPreferences cannot hold.
+     */
+    private val statePrefs: SharedPreferences =
+        context.getSharedPreferences("swiffmark_app_state", Context.MODE_PRIVATE)
 
     companion object {
+        // Secure prefs keys
         private const val KEY_USER_ID = "session_user_id"
         private const val KEY_USER_NAME = "session_user_name"
         private const val KEY_USER_ROLE = "session_user_role"
@@ -26,18 +62,19 @@ class SessionManager(context: Context) {
         private const val KEY_DATA_VERSION = "session_data_version"
         private const val CURRENT_DATA_VERSION = 2
 
-        // Saved login credentials keys
         private const val KEY_SAVE_LOGIN_ENABLED = "saved_login_enabled"
         private const val KEY_SAVED_EMAIL = "saved_login_email"
-        private const val KEY_SAVED_PASSWORD = "saved_login_password"
         private const val KEY_SAVED_IS_TEACHER = "saved_login_is_teacher"
     }
 
     init {
-        if (prefs.contains(KEY_SAVED_PASSWORD)) {
-            prefs.edit().remove(KEY_SAVED_PASSWORD).apply()
+        // Remove any previously stored plaintext password from the old single-prefs approach.
+        if (securePrefs.contains("saved_login_password")) {
+            securePrefs.edit().remove("saved_login_password").apply()
         }
     }
+
+    // ── Session CRUD ────────────────────────────────────────────────────────────
 
     fun saveSession(
         userId: String,
@@ -47,28 +84,24 @@ class SessionManager(context: Context) {
         accessToken: String? = null,
         refreshToken: String? = null
     ) {
-        val editor = prefs.edit()
+        val editor = securePrefs.edit()
             .putString(KEY_USER_ID, userId)
             .putString(KEY_USER_NAME, userName)
             .putString(KEY_USER_ROLE, userRole.uppercase())
             .putString(KEY_USER_EMAIL, userEmail)
             .putInt(KEY_DATA_VERSION, CURRENT_DATA_VERSION)
 
-        if (!accessToken.isNullOrBlank()) {
-            editor.putString(KEY_ACCESS_TOKEN, accessToken)
-        }
-        if (!refreshToken.isNullOrBlank()) {
-            editor.putString(KEY_REFRESH_TOKEN, refreshToken)
-        }
+        if (!accessToken.isNullOrBlank()) editor.putString(KEY_ACCESS_TOKEN, accessToken)
+        if (!refreshToken.isNullOrBlank()) editor.putString(KEY_REFRESH_TOKEN, refreshToken)
         editor.commit()
     }
 
     fun updateUserName(name: String) {
-        prefs.edit().putString(KEY_USER_NAME, name.trim()).commit()
+        securePrefs.edit().putString(KEY_USER_NAME, name.trim()).commit()
     }
 
     fun updateTokens(accessToken: String?, refreshToken: String? = null) {
-        val editor = prefs.edit()
+        val editor = securePrefs.edit()
         if (accessToken.isNullOrBlank()) {
             editor.remove(KEY_ACCESS_TOKEN)
         } else {
@@ -84,41 +117,32 @@ class SessionManager(context: Context) {
         updateTokens(token, null)
     }
 
-    fun isTestDataPurged(): Boolean {
-        return prefs.getBoolean("test_data_purged_v2", false)
-    }
-
-    fun setTestDataPurged(purged: Boolean = true) {
-        prefs.edit().putBoolean("test_data_purged_v2", purged).commit()
-    }
-
     fun getSession(): UserSession? {
-        val userId = prefs.getString(KEY_USER_ID, null) ?: return null
-        val userName = prefs.getString(KEY_USER_NAME, "User") ?: "User"
-        val userRole = prefs.getString(KEY_USER_ROLE, "STUDENT") ?: "STUDENT"
-        val userEmail = prefs.getString(KEY_USER_EMAIL, "") ?: ""
-        val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
-        val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
+        val userId = securePrefs.getString(KEY_USER_ID, null) ?: return null
+        val userName = securePrefs.getString(KEY_USER_NAME, "User") ?: "User"
+        val userRole = securePrefs.getString(KEY_USER_ROLE, "STUDENT") ?: "STUDENT"
+        val userEmail = securePrefs.getString(KEY_USER_EMAIL, "") ?: ""
+        val accessToken = securePrefs.getString(KEY_ACCESS_TOKEN, null)
+        val refreshToken = securePrefs.getString(KEY_REFRESH_TOKEN, null)
         return UserSession(userId, userName, userRole, userEmail, accessToken, refreshToken)
     }
 
     fun getAccessToken(): String? {
-        val token = prefs.getString(KEY_ACCESS_TOKEN, null)
+        val token = securePrefs.getString(KEY_ACCESS_TOKEN, null)
         return if (token.isNullOrBlank()) null else token
     }
 
     fun getRefreshToken(): String? {
-        val token = prefs.getString(KEY_REFRESH_TOKEN, null)
+        val token = securePrefs.getString(KEY_REFRESH_TOKEN, null)
         return if (token.isNullOrBlank()) null else token
     }
 
     /**
      * Clears only the active session tokens so the user logs out.
-     * Preserves KEY_DATA_VERSION and saved login credentials so app close / reopen
-     * and saved autofill work reliably without wiping.
+     * Preserves saved login credentials and app state so autofill and theme survive logout.
      */
     fun clearSession() {
-        prefs.edit()
+        securePrefs.edit()
             .remove(KEY_USER_ID)
             .remove(KEY_USER_NAME)
             .remove(KEY_USER_ROLE)
@@ -128,86 +152,91 @@ class SessionManager(context: Context) {
             .commit()
     }
 
-    fun isLoggedIn(): Boolean {
-        return prefs.getString(KEY_USER_ID, null) != null
-    }
+    fun isLoggedIn(): Boolean = securePrefs.getString(KEY_USER_ID, null) != null
 
-    // ── Save Login Info Credentials ──────────────────────────────────────────
+    // ── Save Login Credentials ──────────────────────────────────────────────────
 
     fun saveLoginCredentials(email: String, isTeacher: Boolean, save: Boolean) {
-        val editor = prefs.edit()
+        val editor = securePrefs.edit()
         editor.putBoolean(KEY_SAVE_LOGIN_ENABLED, save)
         if (save) {
             editor.putString(KEY_SAVED_EMAIL, email.trim())
-            editor.remove(KEY_SAVED_PASSWORD)
             editor.putBoolean(KEY_SAVED_IS_TEACHER, isTeacher)
         } else {
             editor.remove(KEY_SAVED_EMAIL)
-            editor.remove(KEY_SAVED_PASSWORD)
             editor.remove(KEY_SAVED_IS_TEACHER)
         }
         editor.commit()
     }
 
+    // Overload kept for compatibility with existing call sites.
     fun saveLoginCredentials(email: String, password: String, isTeacher: Boolean, save: Boolean) {
         saveLoginCredentials(email, isTeacher, save)
     }
 
-    fun isSaveLoginEnabled(): Boolean = prefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, true)
-    fun getSavedEmail(): String = prefs.getString(KEY_SAVED_EMAIL, "") ?: ""
-    fun getSavedIsTeacher(): Boolean = prefs.getBoolean(KEY_SAVED_IS_TEACHER, false)
+    fun isSaveLoginEnabled(): Boolean = securePrefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, true)
+    fun getSavedEmail(): String = securePrefs.getString(KEY_SAVED_EMAIL, "") ?: ""
+    fun getSavedIsTeacher(): Boolean = securePrefs.getBoolean(KEY_SAVED_IS_TEACHER, false)
 
-    // ── Theme Preference Persistence ──────────────────────────────────────────
-    fun isDarkTheme(): Boolean = prefs.getBoolean("app_dark_theme", true)
+    // ── Test Data Tracking (plain store) ────────────────────────────────────────
+
+    fun isTestDataPurged(): Boolean = statePrefs.getBoolean("test_data_purged_v2", false)
+    fun setTestDataPurged(purged: Boolean = true) {
+        statePrefs.edit().putBoolean("test_data_purged_v2", purged).commit()
+    }
+
+    // ── Theme Preference (plain store) ──────────────────────────────────────────
+
+    fun isDarkTheme(): Boolean = statePrefs.getBoolean("app_dark_theme", true)
     fun setDarkTheme(isDark: Boolean) {
-        prefs.edit().putBoolean("app_dark_theme", isDark).apply()
+        statePrefs.edit().putBoolean("app_dark_theme", isDark).apply()
     }
 
-    // ── Student Left Classes Tracking ─────────────────────────────────────────
-    fun getLeftClassIds(studentId: String): Set<String> {
-        return prefs.getStringSet("left_classes_$studentId", emptySet()) ?: emptySet()
-    }
+    // ── Student Left Classes Tracking (plain store — String sets) ───────────────
+
+    fun getLeftClassIds(studentId: String): Set<String> =
+        statePrefs.getStringSet("left_classes_$studentId", emptySet()) ?: emptySet()
 
     fun markClassLeft(studentId: String, classId: String) {
         val current = getLeftClassIds(studentId).toMutableSet()
         current.add(classId)
-        prefs.edit().putStringSet("left_classes_$studentId", current).apply()
+        statePrefs.edit().putStringSet("left_classes_$studentId", current).apply()
     }
 
     fun unmarkClassLeft(studentId: String, classId: String) {
         val current = getLeftClassIds(studentId).toMutableSet()
         if (current.remove(classId)) {
-            prefs.edit().putStringSet("left_classes_$studentId", current).apply()
+            statePrefs.edit().putStringSet("left_classes_$studentId", current).apply()
         }
     }
 
-    // ── Teacher Deleted Classes Tracking ──────────────────────────────────────
-    fun getDeletedClassIds(teacherId: String): Set<String> {
-        return prefs.getStringSet("deleted_classes_$teacherId", emptySet()) ?: emptySet()
-    }
+    // ── Teacher Deleted Classes Tracking (plain store) ──────────────────────────
+
+    fun getDeletedClassIds(teacherId: String): Set<String> =
+        statePrefs.getStringSet("deleted_classes_$teacherId", emptySet()) ?: emptySet()
 
     fun markClassDeleted(teacherId: String, classId: String) {
         val current = getDeletedClassIds(teacherId).toMutableSet()
         current.add(classId)
-        prefs.edit().putStringSet("deleted_classes_$teacherId", current).apply()
+        statePrefs.edit().putStringSet("deleted_classes_$teacherId", current).apply()
     }
 
-    // ── Attendance Notification Deduplication ─────────────────────────────────
-    fun hasInitializedNotifiedSessions(studentId: String): Boolean {
-        return prefs.getBoolean("notified_sessions_init_$studentId", false)
-    }
+    // ── Attendance Notification Deduplication (plain store) ─────────────────────
+
+    fun hasInitializedNotifiedSessions(studentId: String): Boolean =
+        statePrefs.getBoolean("notified_sessions_init_$studentId", false)
 
     fun getNotifiedEvents(studentId: String): Set<String> {
-        val raw = prefs.getStringSet("notified_events_$studentId", null)
+        val raw = statePrefs.getStringSet("notified_events_$studentId", null)
         if (raw != null) return raw.toSet()
-        return prefs.getStringSet("notified_session_ids_$studentId", emptySet())?.toSet() ?: emptySet()
+        return statePrefs.getStringSet("notified_session_ids_$studentId", emptySet())?.toSet() ?: emptySet()
     }
 
     fun markEventsNotified(studentId: String, events: Collection<String>) {
         if (events.isEmpty()) return
         val current = HashSet(getNotifiedEvents(studentId))
         current.addAll(events)
-        prefs.edit()
+        statePrefs.edit()
             .putStringSet("notified_events_$studentId", HashSet(current))
             .putStringSet("notified_session_ids_$studentId", HashSet(current))
             .putBoolean("notified_sessions_init_$studentId", true)
