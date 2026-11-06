@@ -306,10 +306,16 @@ BEGIN
         RAISE EXCEPTION 'Invalid class join code';
     END IF;
 
-    -- Insert enrollment safely (compatible with UUID or TEXT columns)
-    INSERT INTO public.class_enrollments (class_id, student_id, enrollment_verified)
-    VALUES (v_class.class_id::text, v_uid::text, 1)
-    ON CONFLICT DO NOTHING;
+    -- Insert enrollment safely (compatible with UUID or TEXT columns across schema versions)
+    BEGIN
+        INSERT INTO public.class_enrollments (class_id, student_id, enrollment_verified)
+        VALUES (v_class.class_id, v_uid, 1)
+        ON CONFLICT DO NOTHING;
+    EXCEPTION WHEN OTHERS THEN
+        INSERT INTO public.class_enrollments (class_id, student_id, enrollment_verified)
+        VALUES (v_class.class_id::text, v_uid::text, 1)
+        ON CONFLICT DO NOTHING;
+    END;
 
     RETURN json_build_object(
         'class_id', v_class.class_id::text,
