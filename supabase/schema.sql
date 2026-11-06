@@ -117,6 +117,7 @@ ALTER TABLE public.attendance_records ADD COLUMN IF NOT EXISTS overridden_by TEX
 -- ==============================================================================
 -- AUTOMATIC PROFILE CREATION TRIGGER (SECURITY DEFINER)
 -- Synchronizes users registered via Supabase GoTrue Auth to public.profiles
+-- Supports both UUID and TEXT schemas dynamically and prevents signup crashes.
 -- ==============================================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
@@ -127,32 +128,83 @@ AS $$
 DECLARE
     v_requested_role TEXT;
     v_safe_role TEXT;
+    v_id_type TEXT;
 BEGIN
     -- Read the role the client sent in signup metadata
     v_requested_role := UPPER(TRIM(COALESCE(NEW.raw_user_meta_data->>'role', 'STUDENT')));
 
-    -- Only allow TEACHER or STUDENT; anything else (ADMIN, etc.) becomes STUDENT
+    -- Only allow TEACHER or STUDENT; anything else becomes STUDENT
     IF v_requested_role = 'TEACHER' THEN
         v_safe_role := 'TEACHER';
     ELSE
         v_safe_role := 'STUDENT';
     END IF;
 
-    INSERT INTO public.profiles (id, email, full_name, role)
-    VALUES (
-        NEW.id::text,
-        NEW.email,
-        COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'),
-        v_safe_role
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        email = EXCLUDED.email,
-        full_name = EXCLUDED.full_name,
-        -- Never downgrade an existing TEACHER to STUDENT on conflict
-        role = CASE
-            WHEN profiles.role = 'TEACHER' THEN 'TEACHER'
-            ELSE v_safe_role
-        END;
+    -- Dynamically detect whether profiles.id is uuid or text
+    SELECT data_type INTO v_id_type
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'id';
+
+    IF v_id_type = 'uuid' THEN
+        EXECUTE '
+            INSERT INTO public.profiles (id, email, full_name, role)
+            VALUES ($1::uuid, $2, $3, $4)
+            ON CONFLICT (id) DO UPDATE SET
+                email = EXCLUDED.email,
+                full_name = EXCLUDED.full_name,
+                role = CASE
+                    WHEN public.profiles.role = ''TEACHER'' THEN ''TEACHER''
+                    ELSE $4
+                END
+        ' USING NEW.id, NEW.email, COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'), v_safe_role;
+
+        -- Also initialize role-specific metadata table
+        IF v_safe_role = 'STUDENT' THEN
+            EXECUTE '
+                INSERT INTO public.students (student_id, roll_number, department)
+                VALUES ($1::uuid, $2, $3)
+                ON CONFLICT (student_id) DO NOTHING
+            ' USING NEW.id, NEW.raw_user_meta_data->>'roll_number', NEW.raw_user_meta_data->>'section';
+        ELSIF v_safe_role = 'TEACHER' THEN
+            EXECUTE '
+                INSERT INTO public.teachers (teacher_id, department, designation)
+                VALUES ($1::uuid, $2, $3)
+                ON CONFLICT (teacher_id) DO NOTHING
+            ' USING NEW.id, NEW.raw_user_meta_data->>'section', COALESCE(NEW.raw_user_meta_data->>'roll_number', 'Faculty');
+        END IF;
+    ELSE
+        EXECUTE '
+            INSERT INTO public.profiles (id, email, full_name, role)
+            VALUES ($1::text, $2, $3, $4)
+            ON CONFLICT (id) DO UPDATE SET
+                email = EXCLUDED.email,
+                full_name = EXCLUDED.full_name,
+                role = CASE
+                    WHEN public.profiles.role = ''TEACHER'' THEN ''TEACHER''
+                    ELSE $4
+                END
+        ' USING NEW.id::text, NEW.email, COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'), v_safe_role;
+
+        -- Also initialize role-specific metadata table
+        IF v_safe_role = 'STUDENT' THEN
+            EXECUTE '
+                INSERT INTO public.students (student_id, roll_number, department)
+                VALUES ($1::text, $2, $3)
+                ON CONFLICT (student_id) DO NOTHING
+            ' USING NEW.id::text, NEW.raw_user_meta_data->>'roll_number', NEW.raw_user_meta_data->>'section';
+        ELSIF v_safe_role = 'TEACHER' THEN
+            EXECUTE '
+                INSERT INTO public.teachers (teacher_id, department, designation)
+                VALUES ($1::text, $2, $3)
+                ON CONFLICT (teacher_id) DO NOTHING
+            ' USING NEW.id::text, NEW.raw_user_meta_data->>'section', COALESCE(NEW.raw_user_meta_data->>'roll_number', 'Faculty');
+        END IF;
+    END IF;
+
+    RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+    -- Fallback: log warning without aborting GoTrue transaction
+    RAISE WARNING 'handle_new_user non-fatal error: %', SQLERRM;
     RETURN NEW;
 END;
 $$;
@@ -173,6 +225,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+    -- Allow trigger execution during system or auth events
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+
     IF OLD.role IS DISTINCT FROM NEW.role THEN
         RAISE EXCEPTION 'Role changes are not permitted for security reasons.';
     END IF;
@@ -443,8 +500,10 @@ CREATE POLICY "enrollments_select" ON public.class_enrollments FOR SELECT TO aut
         student_id::text = (auth.uid())::text 
         OR public.is_teacher_of_class(public.class_enrollments.class_id::text, (auth.uid())::text)
     );
-CREATE POLICY "enrollments_insert" ON public.class_enrollments FOR INSERT TO authenticated
-    WITH CHECK (student_id::text = (auth.uid())::text);
+-- H11 FIX: No direct INSERT policy on class_enrollments.
+-- The only valid enrolment path is the join_class_by_code() SECURITY DEFINER RPC,
+-- which validates the join code server-side before inserting.
+-- Any direct POST to /rest/v1/class_enrollments will be rejected by RLS.
 CREATE POLICY "enrollments_delete" ON public.class_enrollments FOR DELETE TO authenticated
     USING (
         student_id::text = (auth.uid())::text 

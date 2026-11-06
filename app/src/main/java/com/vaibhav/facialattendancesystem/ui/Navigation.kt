@@ -110,7 +110,9 @@ private fun decodeRouteParam(param: String): String {
 
 sealed class Screen(val route: String) {
     object Login : Screen("login")
-    object SignUp : Screen("signup")
+    object SignUp : Screen("signup?isTeacher={isTeacher}") {
+        fun createRoute(isTeacher: Boolean = false): String = "signup?isTeacher=$isTeacher"
+    }
     object ForgotPassword : Screen("forgot_password")
     object ResetPassword : Screen("reset_password?token={token}") {
         fun createRoute(token: String): String =
@@ -286,9 +288,9 @@ fun AppNavigation(
                             onBanner = showBanner
                         )
                     },
-                    onNavigateToSignUp = {
+                    onNavigateToSignUp = { isTeacher ->
                         authViewModel.clearError()
-                        navController.navigate(Screen.SignUp.route)
+                        navController.navigate(Screen.SignUp.createRoute(isTeacher))
                     },
                     onForgotPasswordClick = {
                         authViewModel.clearError()
@@ -304,8 +306,18 @@ fun AppNavigation(
                 )
             }
 
-            composable(Screen.SignUp.route) {
+            composable(
+                route = Screen.SignUp.route,
+                arguments = listOf(
+                    androidx.navigation.navArgument("isTeacher") {
+                        type = androidx.navigation.NavType.BoolType
+                        defaultValue = false
+                    }
+                )
+            ) { backStackEntry ->
+                val isTeacher = backStackEntry.arguments?.getBoolean("isTeacher") ?: false
                 SignUpScreen(
+                    initialIsTeacher = isTeacher,
                     onStudentSignUpClick = { name, rollNo, email, pass, section ->
                         authViewModel.signUpStudent(
                             name = name,
@@ -485,7 +497,6 @@ fun AppNavigation(
                     studentName = studentName,
                     onEnrollmentComplete = { capturedSteps, averagedVector ->
                         scope.launch(Dispatchers.IO) {
-                            db.faceEmbeddingDao().deleteEmbeddingsForStudent(studentId)
                             val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
                             val embeddings = capturedSteps.map { step ->
                                 FaceEmbedding(
@@ -494,10 +505,7 @@ fun AppNavigation(
                                     sourceAngle = step.stepAngle,
                                     qualityScore = step.qualityScore
                                 )
-                            }
-                            db.faceEmbeddingDao().insertEmbeddings(embeddings)
-
-                            db.faceEmbeddingDao().insertEmbedding(
+                            } + listOf(
                                 FaceEmbedding(
                                     studentId = studentId,
                                     embeddingVector = converters.floatArrayToByteArray(averagedVector) ?: ByteArray(0),
@@ -505,6 +513,9 @@ fun AppNavigation(
                                     qualityScore = 1.0f
                                 )
                             )
+                            // Atomic replace: delete + insert in a single SQLite transaction
+                            // so a crash mid-way leaves the student with their old embeddings.
+                            db.faceEmbeddingDao().replaceEmbeddingsForStudent(studentId, embeddings)
 
                             val student = db.studentDao().getStudentById(studentId)
                             val user = student?.let { db.userDao().getUserById(it.userId) }
@@ -1426,11 +1437,26 @@ fun AppNavigation(
                 },
                 dismissButton = {
                     if (!isDownloadingUpdate) {
-                        TextButton(onClick = {
-                            availableUpdate = null
-                            updateDownloadError = null
-                        }) {
-                            Text("LATER", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = {
+                                try {
+                                    val browserIntent = android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(downloadUrl)
+                                    ).apply {
+                                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(browserIntent)
+                                } catch (_: Exception) {}
+                            }) {
+                                Text("BROWSER", color = PrimaryCyan)
+                            }
+                            TextButton(onClick = {
+                                availableUpdate = null
+                                updateDownloadError = null
+                            }) {
+                                Text("LATER", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }

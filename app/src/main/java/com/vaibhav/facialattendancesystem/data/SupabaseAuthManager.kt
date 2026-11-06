@@ -63,30 +63,36 @@ object SupabaseAuthManager {
         }
 
         val fullUrl = "${SupabaseConfig.SUPABASE_URL.trimEnd('/')}$endpoint"
+        // Connection leak fix: always disconnect in a finally block regardless of which
+        // code path exits (success, error response, or unexpected exception).
         val connection = URL(fullUrl).openConnection() as HttpURLConnection
-        connection.requestMethod = method
-        connection.connectTimeout = 12000
-        connection.readTimeout = 12000
+        return try {
+            connection.requestMethod = method
+            connection.connectTimeout = 12000
+            connection.readTimeout = 12000
 
-        getHeaders(bearerToken).forEach { (k, v) -> connection.setRequestProperty(k, v) }
+            getHeaders(bearerToken).forEach { (k, v) -> connection.setRequestProperty(k, v) }
 
-        if (body != null && (method == "POST" || method == "PUT" || method == "PATCH")) {
-            connection.doOutput = true
-            OutputStreamWriter(connection.outputStream).use { it.write(body) }
+            if (body != null && (method == "POST" || method == "PUT" || method == "PATCH")) {
+                connection.doOutput = true
+                OutputStreamWriter(connection.outputStream).use { it.write(body) }
+            }
+
+            val statusCode = try {
+                connection.responseCode
+            } catch (e: Exception) {
+                return Pair(503, "{\"msg\":\"Network connection error: ${e.localizedMessage}\"}")
+            }
+
+            val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.let {
+                BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
+            } ?: ""
+
+            Pair(statusCode, response)
+        } finally {
+            connection.disconnect()
         }
-
-        val statusCode = try {
-            connection.responseCode
-        } catch (e: Exception) {
-            return Pair(503, "{\"msg\":\"Network connection error: ${e.localizedMessage}\"}")
-        }
-
-        val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
-        val response = stream?.let {
-            BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
-        } ?: ""
-
-        return Pair(statusCode, response)
     }
 
     /**

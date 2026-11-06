@@ -263,7 +263,7 @@ fun PrototypeFieldRow(
 @Composable
 fun LoginScreen(
     onLoginClick: (email: String, password: String, isTeacher: Boolean, saveLogin: Boolean) -> Unit,
-    onNavigateToSignUp: () -> Unit,
+    onNavigateToSignUp: (Boolean) -> Unit = {},
     onForgotPasswordClick: () -> Unit = {},
     onResendVerificationClick: (String) -> Unit = {},
     initialEmail: String = "",
@@ -444,7 +444,7 @@ fun LoginScreen(
                 text = "New here? Create account",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clickable { onNavigateToSignUp() }
+                modifier = Modifier.clickable { onNavigateToSignUp(isTeacherSelected) }
             )
         }
     }
@@ -456,13 +456,14 @@ fun LoginScreen(
 
 @Composable
 fun SignUpScreen(
+    initialIsTeacher: Boolean = false,
     onStudentSignUpClick: (name: String, rollNo: Int, email: String, pass: String, section: String) -> Unit,
     onTeacherSignUpClick: (name: String, department: String, email: String, pass: String) -> Unit,
     onNavigateToLogin: () -> Unit,
     errorMessage: String? = null,
     isLoading: Boolean = false
 ) {
-    var isTeacherRole by remember { mutableStateOf(false) }
+    var isTeacherRole by remember { mutableStateOf(initialIsTeacher) }
     var fullName by remember { mutableStateOf("") }
     var rollNumberStr by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }

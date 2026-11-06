@@ -862,23 +862,13 @@ object CloudSyncManager {
                 )
             }
 
-            // If join_class_by_code RPC succeeded, enrollment is already safely committed by the backend.
-            // Otherwise, attempt direct insert for legacy fallback.
-            val isEnrolledViaRpc = rpcStatus in 200..299
-            var enrollStatus = if (isEnrolledViaRpc) 200 else 0
-
-            if (!isEnrolledViaRpc) {
-                val enrollmentJson = JSONObject().apply {
-                    put("class_id", newClazz.classId)
-                    put("student_id", studentId)
-                }
-                val (status, _) = executeRequest(
-                    "/rest/v1/class_enrollments?on_conflict=class_id,student_id",
-                    "POST",
-                    enrollmentJson.toString(),
-                    mapOf("Prefer" to "resolution=merge-duplicates")
-                )
-                enrollStatus = status
+            // H11 FIX: The join_class_by_code() RPC is the ONLY valid enrolment path.
+            // It validates the join code server-side (SECURITY DEFINER) before inserting.
+            // The direct-insert fallback has been removed because the enrollments_insert
+            // RLS policy no longer exists — a direct POST would be rejected with 403.
+            if (rpcStatus !in 200..299) {
+                Log.e(TAG, "join_class_by_code RPC failed with status $rpcStatus — aborting join.")
+                return@withContext Pair(false, "Could not join class. Please check the join code and try again.")
             }
 
             // Save class & enrollment locally as verified (1) so student and teacher both see it immediately
@@ -888,11 +878,7 @@ object CloudSyncManager {
             )
             db?.classEnrollmentDao()?.updateEnrollmentStatus(newClazz.classId, studentId, 1)
 
-            if (enrollStatus in 200..299 || enrollStatus == 409) {
-                Pair(true, newClazz.className)
-            } else {
-                Pair(true, "${newClazz.className} (saved locally, will sync)")
-            }
+            Pair(true, newClazz.className)
         } catch (e: Exception) {
             Log.e(TAG, "Error in joinClassByCode", e)
             Pair(false, e.localizedMessage ?: "Join Error")
@@ -1015,7 +1001,7 @@ object CloudSyncManager {
 
     suspend fun uploadStudentProfile(
         student: Student,
-        embeddingsWithAngles: List<Pair<String, FloatArray>>
+        embeddingsWithAngles: List<Triple<String, FloatArray, Int>>
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             ensureCloudUserProfile(student.studentId, student.email, student.fullName, "STUDENT", student.rollNumber.toString(), student.classSection ?: "")
@@ -1026,13 +1012,16 @@ object CloudSyncManager {
 
             if (embeddingsWithAngles.isNotEmpty()) {
                 val batchArray = JSONArray()
-                for ((angle, emb) in embeddingsWithAngles) {
+                for ((angle, emb, pipelineVersion) in embeddingsWithAngles) {
                     val base64 = Base64.encodeToString(converters.floatArrayToByteArray(emb), Base64.NO_WRAP)
                     batchArray.put(JSONObject().apply {
                         put("student_id", student.studentId)
                         put("embedding_vector_base64", base64)
                         put("angle_label", angle)
-                        put("pipeline_version", 2)
+                        // H6 FIX: use the actual pipeline version from the embedding,
+                        // not a hardcoded constant. This ensures stale v1 embeddings are
+                        // correctly labelled so the >= 2 filter in AttendanceViewModel works.
+                        put("pipeline_version", pipelineVersion)
                     })
                 }
                 val (postCode, postResp) = executeRequest("/rest/v1/face_embeddings", "POST", batchArray.toString())
@@ -1048,13 +1037,22 @@ object CloudSyncManager {
         }
     }
 
+    @JvmName("uploadStudentProfilePairs")
+    suspend fun uploadStudentProfile(
+        student: Student,
+        embeddingsWithAngles: List<Pair<String, FloatArray>>
+    ): Boolean = uploadStudentProfile(
+        student,
+        embeddingsWithAngles.map { (angle, vec) -> Triple(angle, vec, 2) }
+    )
+
     @JvmName("uploadStudentProfileVectors")
     suspend fun uploadStudentProfile(
         student: Student,
         embeddings: List<FloatArray>
     ): Boolean = uploadStudentProfile(
         student,
-        embeddings.map { "FRONTAL" to it }
+        embeddings.map { Triple("FRONTAL", it, 2) }
     )
 
     suspend fun uploadNewClass(clazz: Clazz): Boolean = withContext(Dispatchers.IO) {
@@ -1084,21 +1082,32 @@ object CloudSyncManager {
     suspend fun syncStudentFaceEmbeddings(studentId: String, db: AppDatabase): Boolean = withContext(Dispatchers.IO) {
         try {
             val (code, response) = executeRequest("/rest/v1/face_embeddings?student_id=eq.$studentId&select=*", "GET")
+            if (code !in 200..299) {
+                Log.e(TAG, "syncStudentFaceEmbeddings: HTTP $code for student $studentId")
+                return@withContext false
+            }
             val array = JSONArray(response)
-            if (code !in 200..299 || array.length() == 0) return@withContext false
-            db.faceEmbeddingDao().deleteEmbeddingsForStudent(studentId)
+            if (array.length() == 0) return@withContext false
+            val embeddings = mutableListOf<FaceEmbedding>()
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
-                db.faceEmbeddingDao().insertEmbedding(FaceEmbedding(
+                embeddings.add(FaceEmbedding(
                     studentId = studentId,
                     embeddingVector = Base64.decode(obj.getString("embedding_vector_base64"), Base64.DEFAULT),
                     sourceAngle = obj.optString("angle_label", "FRONTAL"),
-                    qualityScore = 1.0f,
+                    // P2 fix: read quality_score from cloud if present; fall back to 1.0 only when absent.
+                    qualityScore = obj.optDouble("quality_score", 1.0).toFloat(),
                     pipelineVersion = obj.optInt("pipeline_version", 2)
                 ))
             }
+            // P2 fix: use the atomic @Transaction helper so a mid-sync crash doesn't
+            // leave the student with zero embeddings in Room.
+            db.faceEmbeddingDao().replaceEmbeddingsForStudent(studentId, embeddings)
             true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            Log.e(TAG, "syncStudentFaceEmbeddings failed for student $studentId", e)
+            false
+        }
     }
 
     suspend fun syncClassAttendanceSessionsForTeacher(classId: String, db: AppDatabase): Pair<Boolean, String> = withContext(Dispatchers.IO) {
@@ -1518,6 +1527,18 @@ object CloudSyncManager {
      */
     fun launchApkInstall(context: Context, apkFile: java.io.File): Boolean {
         return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    val settingsIntent = android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        android.net.Uri.parse("package:${context.packageName}")
+                    ).apply {
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(settingsIntent)
+                    return true
+                }
+            }
             val apkUri = androidx.core.content.FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",

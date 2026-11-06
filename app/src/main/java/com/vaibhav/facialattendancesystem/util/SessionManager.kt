@@ -38,9 +38,17 @@ class SessionManager(context: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
     } catch (e: Exception) {
-        // Fallback to plain prefs if the keystore is unavailable (e.g. some emulators).
-        Log.e("SessionManager", "EncryptedSharedPreferences unavailable, falling back to plain prefs", e)
-        context.getSharedPreferences("swiffmark_secure_session_fallback", Context.MODE_PRIVATE)
+        // Android Keystore is unavailable (e.g. device reset, corrupted keystore).
+        // Security fix: DO NOT fall back to plain SharedPreferences for sensitive
+        // JWT tokens — that would expose access/refresh tokens in plaintext on disk.
+        // Instead we return an ephemeral (unique-name, immediately-cleared) prefs file
+        // so all reads return null/default, getSession() returns null, and the app
+        // routes the user back to the login screen automatically.
+        Log.e("SessionManager", "EncryptedSharedPreferences unavailable — session cleared, user must re-authenticate.", e)
+        context.getSharedPreferences(
+            "swiffmark_session_dead_${System.currentTimeMillis()}",
+            Context.MODE_PRIVATE
+        ).also { it.edit().clear().apply() }
     }
 
     /**

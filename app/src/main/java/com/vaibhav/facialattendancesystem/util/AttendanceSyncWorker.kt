@@ -17,6 +17,13 @@ class AttendanceSyncWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        // Cap retry attempts so the worker doesn't loop forever on a persistent error
+        // (e.g. server down, bad auth token). After 5 attempts we surface failure
+        // and let WorkManager's normal periodic schedule try again next interval.
+        if (runAttemptCount > 5) {
+            android.util.Log.e("AttendanceSyncWorker", "Max retry attempts (5) reached, giving up.")
+            return@withContext Result.failure()
+        }
         try {
             val db = AppDatabase.getDatabase(applicationContext)
             val sessionManager = SessionManager(applicationContext)
@@ -30,10 +37,12 @@ class AttendanceSyncWorker(
                     val localStudent = db.studentDao().getStudentById(session.userId)
                     if (localStudent != null) {
                         val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
+                        // H6 FIX: carry actual pipelineVersion per embedding so the cloud
+                        // receives the real value instead of a hardcoded constant.
                         val localEmbs = db.faceEmbeddingDao().getEmbeddingsForStudent(session.userId)
                             .mapNotNull { emb ->
                                 val vec = converters.byteArrayToFloatArray(emb.embeddingVector)
-                                if (vec != null) emb.sourceAngle to vec else null
+                                if (vec != null) Triple(emb.sourceAngle, vec, emb.pipelineVersion) else null
                             }
                         if (localEmbs.isNotEmpty()) {
                             CloudSyncManager.uploadStudentProfile(localStudent, localEmbs)
@@ -69,7 +78,7 @@ class AttendanceSyncWorker(
             }
             Result.success()
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("AttendanceSyncWorker", "Sync failed, will retry", e)
             Result.retry()
         }
     }

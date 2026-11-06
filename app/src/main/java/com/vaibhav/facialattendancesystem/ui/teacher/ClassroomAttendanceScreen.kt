@@ -239,6 +239,11 @@ fun ClassroomAttendanceScreen(
     var stage       by rememberSaveable { mutableStateOf(AttendanceCaptureStage.TAKE_PHOTO_1) }
     var isProcessing by remember { mutableStateOf(false) }
     var showResume  by remember { mutableStateOf(false) }
+    // H4 / M7 FIX: warn teacher if Photo 2 is taken too soon after Photo 1.
+    // A gap under MIN_PHOTO_GAP_MS (15 min) triggers a confirmation dialog rather
+    // than hard-blocking (legitimate short classes exist).
+    var showGapWarning by remember { mutableStateOf(false) }
+    val MIN_PHOTO_GAP_MS = 15 * 60 * 1000L // 15 minutes
 
     // Photo 1 state
     var photo1Path by remember { mutableStateOf("") }
@@ -368,10 +373,49 @@ fun ClassroomAttendanceScreen(
         }
 
         AttendanceCaptureStage.SESSION_SAVED -> {
+            // H4 / M7 FIX: Show a soft warning if the teacher tries to start Photo 2
+            // less than 15 minutes after Photo 1 (possible fraud or accidental double-tap).
+            if (showGapWarning) {
+                val photo1Ts = prefs.getLong("d_${classId}_ts", 0L)
+                val elapsedMin = (System.currentTimeMillis() - photo1Ts) / 60_000L
+                AlertDialog(
+                    onDismissRequest = { showGapWarning = false },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    title = { Text("Short Gap Warning", fontWeight = FontWeight.Bold, color = WarningAmber) },
+                    text = {
+                        Text(
+                            "Only $elapsedMin minute(s) have passed since Photo 1.\n\n" +
+                            "Taking Photo 2 this soon may not capture who stayed for the full class. " +
+                            "Continue anyway?",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = { showGapWarning = false; stage = AttendanceCaptureStage.TAKE_PHOTO_2 },
+                            colors = ButtonDefaults.buttonColors(containerColor = WarningAmber)
+                        ) { Text("CONTINUE ANYWAY", color = Color.White, fontWeight = FontWeight.Bold) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showGapWarning = false }) {
+                            Text("WAIT LONGER", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                )
+            }
             SessionSavedView(
                 presentCount  = photo1Statuses.count { it.isMarkedPresent },
                 totalStudents = enrolledStudents.size,
-                onContinueNow = { stage = AttendanceCaptureStage.TAKE_PHOTO_2 },
+                onContinueNow = {
+                    val photo1Ts = prefs.getLong("d_${classId}_ts", 0L)
+                    val elapsed = System.currentTimeMillis() - photo1Ts
+                    if (photo1Ts > 0L && elapsed < MIN_PHOTO_GAP_MS) {
+                        showGapWarning = true
+                    } else {
+                        stage = AttendanceCaptureStage.TAKE_PHOTO_2
+                    }
+                },
                 onCloseApp    = onCancel
             )
         }
@@ -857,9 +901,9 @@ fun FinalSummaryView(
     val earlyLeaveMap = remember(photo1Only) {
         mutableStateMapOf<String, Boolean>().also { m -> photo1Only.forEach { m[it] = false } }
     }
-    // photo2Only default = true (arrived late but was there)
+    // photo2Only default = false (teacher opts students IN, not out — mirrors earlyLeaveMap)
     val lateArriveMap = remember(photo2Only) {
-        mutableStateMapOf<String, Boolean>().also { m -> photo2Only.forEach { m[it] = true } }
+        mutableStateMapOf<String, Boolean>().also { m -> photo2Only.forEach { m[it] = false } }
     }
 
     val finalPresentIds: Set<String> =

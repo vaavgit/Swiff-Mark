@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AttendanceRecord::class,
         RecognitionLog::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 
@@ -62,6 +62,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * MIGRATION 8→9: Pipeline-version data integrity fix (H6).
+         *
+         * MIGRATION_7_8 added the pipeline_version column with DEFAULT 2, which
+         * incorrectly labelled every pre-existing embedding (enrolled before the
+         * BGR→RGB + alignment pipeline change) as version 2. The actual new-pipeline
+         * embeddings are correct, but old ones were never re-enrolled, so the
+         * AttendanceViewModel's `>= 2` filter has been silently including stale data.
+         *
+         * The safest fix at the Room level is to wipe all local embeddings and force
+         * every device to re-sync from Supabase, which will now correctly report
+         * version 1 or 2 after the one-time Supabase UPDATE (run separately):
+         *   UPDATE public.face_embeddings
+         *   SET pipeline_version = 1
+         *   WHERE created_at < '<your BGR-change commit date>';
+         *
+         * Students who re-open the app will trigger a background sync that pulls the
+         * correctly-labelled embeddings back down. Teachers will see the corrected
+         * pipeline_version filter take effect for the next attendance session.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Wipe local embeddings — they will be re-fetched from Supabase on next sync.
+                // Supabase is the source of truth for pipeline_version after the one-time UPDATE.
+                db.execSQL("DELETE FROM face_embeddings")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -75,7 +103,7 @@ abstract class AppDatabase : RoomDatabase() {
                             db.execSQL("PRAGMA foreign_keys = ON;")
                         }
                     })
-                    .addMigrations(MIGRATION_7_8)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9)
                     .build()
                 INSTANCE = instance
                 instance

@@ -117,6 +117,17 @@ interface FaceEmbeddingDao {
 
     @Query("DELETE FROM face_embeddings")
     fun deleteAllEmbeddings(): Int
+
+    /**
+     * Atomically replaces all embeddings for a student.
+     * The DELETE + INSERT runs inside a single SQLite transaction so a crash or
+     * error mid-way leaves the student with their old embeddings rather than zero.
+     */
+    @Transaction
+    fun replaceEmbeddingsForStudent(studentId: String, embeddings: List<FaceEmbedding>) {
+        deleteEmbeddingsForStudent(studentId)
+        insertEmbeddings(embeddings)
+    }
 }
 
 @Dao
