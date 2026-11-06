@@ -1,0 +1,830 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 8,
+    "identityHash": "559196223b7af2a4e4628dc85a371166",
+    "entities": [
+      {
+        "tableName": "users",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`user_id` TEXT NOT NULL, `email` TEXT NOT NULL, `password_hash` TEXT NOT NULL, `user_type` TEXT NOT NULL, `name` TEXT NOT NULL, `created_at` INTEGER NOT NULL, PRIMARY KEY(`user_id`))",
+        "fields": [
+          {
+            "fieldPath": "userId",
+            "columnName": "user_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passwordHash",
+            "columnName": "password_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userType",
+            "columnName": "user_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "user_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_users_email",
+            "unique": true,
+            "columnNames": [
+              "email"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_users_email` ON `${TABLE_NAME}` (`email`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "students",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`student_id` TEXT NOT NULL, `user_id` TEXT NOT NULL, `roll_number` INTEGER NOT NULL, `full_name` TEXT NOT NULL, `email` TEXT NOT NULL, `class_section` TEXT, `enrollment_status` INTEGER NOT NULL, `enrollment_date` INTEGER NOT NULL, PRIMARY KEY(`student_id`), FOREIGN KEY(`user_id`) REFERENCES `users`(`user_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "studentId",
+            "columnName": "student_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "user_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rollNumber",
+            "columnName": "roll_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fullName",
+            "columnName": "full_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classSection",
+            "columnName": "class_section",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "enrollmentStatus",
+            "columnName": "enrollment_status",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enrollmentDate",
+            "columnName": "enrollment_date",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "student_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_students_user_id",
+            "unique": true,
+            "columnNames": [
+              "user_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_students_user_id` ON `${TABLE_NAME}` (`user_id`)"
+          },
+          {
+            "name": "index_students_email",
+            "unique": true,
+            "columnNames": [
+              "email"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_students_email` ON `${TABLE_NAME}` (`email`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "users",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "user_id"
+            ],
+            "referencedColumns": [
+              "user_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "teachers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`teacher_id` TEXT NOT NULL, `user_id` TEXT NOT NULL, `subject` TEXT NOT NULL, `department` TEXT, `created_at` INTEGER NOT NULL, PRIMARY KEY(`teacher_id`), FOREIGN KEY(`user_id`) REFERENCES `users`(`user_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "teacherId",
+            "columnName": "teacher_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "user_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "department",
+            "columnName": "department",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "teacher_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_teachers_user_id",
+            "unique": true,
+            "columnNames": [
+              "user_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_teachers_user_id` ON `${TABLE_NAME}` (`user_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "users",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "user_id"
+            ],
+            "referencedColumns": [
+              "user_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "face_embeddings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`embedding_id` TEXT NOT NULL, `student_id` TEXT NOT NULL, `embedding_vector` BLOB NOT NULL, `source_angle` TEXT NOT NULL, `quality_score` REAL NOT NULL, `source_photo_path` TEXT, `pipeline_version` INTEGER NOT NULL, `enrollment_timestamp` INTEGER NOT NULL, PRIMARY KEY(`embedding_id`), FOREIGN KEY(`student_id`) REFERENCES `students`(`student_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "embeddingId",
+            "columnName": "embedding_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "student_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "embeddingVector",
+            "columnName": "embedding_vector",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceAngle",
+            "columnName": "source_angle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "qualityScore",
+            "columnName": "quality_score",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourcePhotoPath",
+            "columnName": "source_photo_path",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "pipelineVersion",
+            "columnName": "pipeline_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enrollmentTimestamp",
+            "columnName": "enrollment_timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "embedding_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_face_embeddings_student_id",
+            "unique": false,
+            "columnNames": [
+              "student_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_face_embeddings_student_id` ON `${TABLE_NAME}` (`student_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "students",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "student_id"
+            ],
+            "referencedColumns": [
+              "student_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "classes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`class_id` TEXT NOT NULL, `teacher_id` TEXT NOT NULL, `class_name` TEXT NOT NULL, `subject` TEXT NOT NULL, `semester` INTEGER NOT NULL, `section` TEXT NOT NULL, `class_code` TEXT NOT NULL, `created_at` INTEGER NOT NULL, PRIMARY KEY(`class_id`))",
+        "fields": [
+          {
+            "fieldPath": "classId",
+            "columnName": "class_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "teacherId",
+            "columnName": "teacher_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "className",
+            "columnName": "class_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semester",
+            "columnName": "semester",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "section",
+            "columnName": "section",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classCode",
+            "columnName": "class_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "class_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_classes_teacher_id",
+            "unique": false,
+            "columnNames": [
+              "teacher_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_classes_teacher_id` ON `${TABLE_NAME}` (`teacher_id`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "class_enrollments",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`enrollment_id` TEXT NOT NULL, `class_id` TEXT NOT NULL, `student_id` TEXT NOT NULL, `enrolled_at` INTEGER NOT NULL, `enrollment_verified` INTEGER NOT NULL, PRIMARY KEY(`enrollment_id`), FOREIGN KEY(`class_id`) REFERENCES `classes`(`class_id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`student_id`) REFERENCES `students`(`student_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "enrollmentId",
+            "columnName": "enrollment_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classId",
+            "columnName": "class_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "student_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enrolledAt",
+            "columnName": "enrolled_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enrollmentVerified",
+            "columnName": "enrollment_verified",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "enrollment_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_class_enrollments_class_id_student_id",
+            "unique": true,
+            "columnNames": [
+              "class_id",
+              "student_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_class_enrollments_class_id_student_id` ON `${TABLE_NAME}` (`class_id`, `student_id`)"
+          },
+          {
+            "name": "index_class_enrollments_student_id",
+            "unique": false,
+            "columnNames": [
+              "student_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_class_enrollments_student_id` ON `${TABLE_NAME}` (`student_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "classes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "class_id"
+            ],
+            "referencedColumns": [
+              "class_id"
+            ]
+          },
+          {
+            "table": "students",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "student_id"
+            ],
+            "referencedColumns": [
+              "student_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "attendance_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`session_id` TEXT NOT NULL, `class_id` TEXT NOT NULL, `session_date` INTEGER NOT NULL, `photo_1_timestamp` INTEGER NOT NULL, `photo_1_path` TEXT NOT NULL, `photo_1_faces_detected` INTEGER NOT NULL, `photo_2_timestamp` INTEGER, `photo_2_path` TEXT, `photo_2_faces_detected` INTEGER, `session_status` TEXT NOT NULL, `is_synced` INTEGER NOT NULL, `created_at` INTEGER NOT NULL, PRIMARY KEY(`session_id`), FOREIGN KEY(`class_id`) REFERENCES `classes`(`class_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classId",
+            "columnName": "class_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionDate",
+            "columnName": "session_date",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photo1Timestamp",
+            "columnName": "photo_1_timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photo1Path",
+            "columnName": "photo_1_path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photo1FacesDetected",
+            "columnName": "photo_1_faces_detected",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photo2Timestamp",
+            "columnName": "photo_2_timestamp",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photo2Path",
+            "columnName": "photo_2_path",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photo2FacesDetected",
+            "columnName": "photo_2_faces_detected",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sessionStatus",
+            "columnName": "session_status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isSynced",
+            "columnName": "is_synced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "session_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_attendance_sessions_class_id",
+            "unique": false,
+            "columnNames": [
+              "class_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_attendance_sessions_class_id` ON `${TABLE_NAME}` (`class_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "classes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "class_id"
+            ],
+            "referencedColumns": [
+              "class_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "attendance_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`attendance_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `student_id` TEXT NOT NULL, `photo_1_match_confidence` REAL, `photo_1_matched` INTEGER, `photo_2_match_confidence` REAL, `photo_2_matched` INTEGER, `dual_capture_present` INTEGER, `marked_present` INTEGER NOT NULL, `manual_override` INTEGER, `manually_overridden_at` INTEGER, `overridden_by` TEXT, `override_notes` TEXT, `created_at` INTEGER NOT NULL, PRIMARY KEY(`attendance_id`), FOREIGN KEY(`session_id`) REFERENCES `attendance_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`student_id`) REFERENCES `students`(`student_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "attendanceId",
+            "columnName": "attendance_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "student_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photo1MatchConfidence",
+            "columnName": "photo_1_match_confidence",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photo1Matched",
+            "columnName": "photo_1_matched",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photo2MatchConfidence",
+            "columnName": "photo_2_match_confidence",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photo2Matched",
+            "columnName": "photo_2_matched",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dualCapturePresent",
+            "columnName": "dual_capture_present",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "markedPresent",
+            "columnName": "marked_present",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "manualOverride",
+            "columnName": "manual_override",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "manuallyOverriddenAt",
+            "columnName": "manually_overridden_at",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "overriddenBy",
+            "columnName": "overridden_by",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "overrideNotes",
+            "columnName": "override_notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "attendance_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_attendance_records_session_id_student_id",
+            "unique": true,
+            "columnNames": [
+              "session_id",
+              "student_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_attendance_records_session_id_student_id` ON `${TABLE_NAME}` (`session_id`, `student_id`)"
+          },
+          {
+            "name": "index_attendance_records_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_attendance_records_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          },
+          {
+            "name": "index_attendance_records_student_id",
+            "unique": false,
+            "columnNames": [
+              "student_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_attendance_records_student_id` ON `${TABLE_NAME}` (`student_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "attendance_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "session_id"
+            ],
+            "referencedColumns": [
+              "session_id"
+            ]
+          },
+          {
+            "table": "students",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "student_id"
+            ],
+            "referencedColumns": [
+              "student_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "recognition_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`log_id` TEXT NOT NULL, `session_id` TEXT NOT NULL, `detected_face_index` INTEGER NOT NULL, `matched_student_id` TEXT, `confidence_score` REAL NOT NULL, `top_5_candidates` TEXT, `processing_time_ms` INTEGER, `error_message` TEXT, `photo_label` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`log_id`), FOREIGN KEY(`session_id`) REFERENCES `attendance_sessions`(`session_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "logId",
+            "columnName": "log_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "session_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detectedFaceIndex",
+            "columnName": "detected_face_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "matchedStudentId",
+            "columnName": "matched_student_id",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "confidenceScore",
+            "columnName": "confidence_score",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "top5Candidates",
+            "columnName": "top_5_candidates",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "processingTimeMs",
+            "columnName": "processing_time_ms",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "errorMessage",
+            "columnName": "error_message",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photoLabel",
+            "columnName": "photo_label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "log_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_recognition_logs_session_id",
+            "unique": false,
+            "columnNames": [
+              "session_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_recognition_logs_session_id` ON `${TABLE_NAME}` (`session_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "attendance_sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "session_id"
+            ],
+            "referencedColumns": [
+              "session_id"
+            ]
+          }
+        ]
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '559196223b7af2a4e4628dc85a371166')"
+    ]
+  }
+}

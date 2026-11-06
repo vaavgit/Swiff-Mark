@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RecognitionLog::class
     ],
     version = 8,
-    exportSchema = false
+    exportSchema = true
 )
 
 @TypeConverters(VectorTypeConverters::class)
@@ -76,7 +76,6 @@ abstract class AppDatabase : RoomDatabase() {
                         }
                     })
                     .addMigrations(MIGRATION_7_8)
-                    .fallbackToDestructiveMigrationOnDowngrade()
                     .build()
                 INSTANCE = instance
                 instance

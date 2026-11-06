@@ -476,6 +476,8 @@ fun SignUpScreen(
     val isDark = isAppDarkTheme()
 
     val isEmailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    // Passkey is a client-side registration gate for the teacher portal.
+    // Replace with server-side role verification in a production deployment.
     val isPasskeyValid = facultyPasskey.trim().uppercase() in listOf("TEACHER2026", "FACULTY2026", "SWIFF2026")
     val isStudentValid = fullName.isNotBlank() && isEmailValid && password.length >= 8 && rollNumberStr.isNotBlank() && hasConsented
     val isTeacherValid = fullName.isNotBlank() && isEmailValid && password.length >= 8 && teacherDepartment.isNotBlank() && isPasskeyValid

@@ -17,6 +17,9 @@ data class User(
     val userId: String = UUID.randomUUID().toString(),
     val email: String,
     @ColumnInfo(name = "password_hash")
+    // Always stored as empty string — authentication is handled by Supabase Auth.
+    // This field is retained for Room schema compatibility and must not be removed
+    // without a corresponding database migration.
     val passwordHash: String,
     @ColumnInfo(name = "user_type")
     val userType: String, // 'STUDENT' or 'TEACHER'
