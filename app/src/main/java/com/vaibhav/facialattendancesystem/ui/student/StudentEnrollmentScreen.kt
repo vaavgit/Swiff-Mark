@@ -128,14 +128,16 @@ fun StudentEnrollmentScreen(
 
     val steps = listOf(
         "STRAIGHT" to "Look Straight at Camera",
+        "BLINK" to "Blink Eyes Naturally (Liveness Check)",
         "UP" to "Tilt Head Up Slightly (30°)",
         "DOWN" to "Tilt Head Down Slightly (30°)",
         "LEFT" to "Turn Head Left (30°)",
         "RIGHT" to "Turn Head Right (30°)",
-        "SMILE" to "Smile Naturally (Liveness Check)"
+        "SMILE" to "Smile Naturally"
     )
 
     var currentStepIndex by remember { mutableStateOf(0) }
+    var hasBlinkedDuringStep by remember(currentStepIndex) { mutableStateOf(false) }
     var currentFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var detectedFaces by remember { mutableStateOf<List<DetectedFace>>(emptyList()) }
     var qualityMetrics by remember { mutableStateOf<FaceQualityMetrics?>(null) }
@@ -258,6 +260,13 @@ fun StudentEnrollmentScreen(
                                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                                 if (primaryFace != null && primaryFace.boundingBox.width() >= bitmap.width * 0.20f) {
                                     qualityMetrics = ImageQualityValidator.validateFaceQuality(bitmap, primaryFace.boundingBox)
+                                    if (currentAngle == "BLINK") {
+                                        val leftProb = primaryFace.leftEyeOpenProbability ?: 1.0f
+                                        val rightProb = primaryFace.rightEyeOpenProbability ?: 1.0f
+                                        if (leftProb < 0.25f || rightProb < 0.25f) {
+                                            hasBlinkedDuringStep = true
+                                        }
+                                    }
                                 } else {
                                     qualityMetrics = null
                                 }
@@ -304,7 +313,7 @@ fun StudentEnrollmentScreen(
             (primaryFace.boundingBox.centerX() in (frame.width * 0.20f)..(frame.width * 0.80f)) &&
             (primaryFace.boundingBox.centerY() in (frame.height * 0.15f)..(frame.height * 0.85f))
         val haptic = LocalHapticFeedback.current
-        val (isPoseValid, posePrompt) = checkStepPose(currentAngle, primaryFace)
+        val (isPoseValid, posePrompt) = checkStepPose(currentAngle, primaryFace, hasBlinkedDuringStep)
         val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
 
         val onExecuteCapture: () -> Unit = {
@@ -420,7 +429,7 @@ fun StudentEnrollmentScreen(
     }
 }
 
-private fun checkStepPose(angle: String, face: DetectedFace?): Pair<Boolean, String> {
+private fun checkStepPose(angle: String, face: DetectedFace?, hasBlinked: Boolean = false): Pair<Boolean, String> {
     if (face == null) return Pair(false, "ALIGN FACE IN OVAL")
     val pitch = face.headEulerAngleX
     val yaw = face.headEulerAngleY
@@ -432,6 +441,17 @@ private fun checkStepPose(angle: String, face: DetectedFace?): Pair<Boolean, Str
                 Pair(false, "LOOK DIRECTLY AT CAMERA")
             } else {
                 Pair(true, "PERFECT - HOLD STILL")
+            }
+        }
+        "BLINK" -> {
+            val leftProb = face.leftEyeOpenProbability ?: 1.0f
+            val rightProb = face.rightEyeOpenProbability ?: 1.0f
+            if (!hasBlinked) {
+                Pair(false, "BLINK YOUR EYES NATURALLY")
+            } else if (leftProb < 0.35f || rightProb < 0.35f) {
+                Pair(false, "OPEN EYES AFTER BLINK")
+            } else {
+                Pair(true, "LIVENESS VERIFIED (LIVE PERSON)")
             }
         }
         "UP" -> {

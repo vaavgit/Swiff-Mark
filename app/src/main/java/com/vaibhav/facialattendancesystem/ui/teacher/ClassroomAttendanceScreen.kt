@@ -165,13 +165,16 @@ private fun saveDraft(
         .apply()
 }
 
-private fun clearDraft(prefs: android.content.SharedPreferences, classId: String) {
+private fun clearDraft(prefs: android.content.SharedPreferences, classId: String, context: Context? = null) {
     prefs.edit()
         .remove("d_${classId}_sid")
         .remove("d_${classId}_p1")
         .remove("d_${classId}_ids")
         .remove("d_${classId}_ts")
         .apply()
+    if (context != null) {
+        com.vaibhav.facialattendancesystem.util.NotificationHelper.cancelPhoto2Reminder(context, classId)
+    }
 }
 
 // ── Main Screen ───────────────────────────────────────────────────────────────
@@ -305,7 +308,7 @@ fun ClassroomAttendanceScreen(
                 ) { Text("RESUME →", color = Color.White, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { clearDraft(prefs, classId); showResume = false }) {
+                TextButton(onClick = { clearDraft(prefs, classId, context); showResume = false }) {
                     Text("START FRESH", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -367,6 +370,12 @@ fun ClassroomAttendanceScreen(
                 proceedLabel = "SAVE & CONTINUE ->",
                 onProceed    = {
                     saveDraft(prefs, classId, sessionId, photo1Path, photo1Statuses)
+                    com.vaibhav.facialattendancesystem.util.NotificationHelper.schedulePhoto2Reminder(
+                        context = context,
+                        classId = classId,
+                        className = className,
+                        delayMinutes = 40
+                    )
                     stage = AttendanceCaptureStage.SESSION_SAVED
                 }
             )
@@ -477,7 +486,7 @@ fun ClassroomAttendanceScreen(
                 photo1Statuses   = photo1Statuses,
                 photo2Statuses   = photo2Statuses,
                 onConfirm        = { finalPresentIds ->
-                    clearDraft(prefs, classId)
+                    clearDraft(prefs, classId, context)
                     // Auto-cleanup raw classroom capture photos to preserve privacy and storage
                     listOf(photo1Path, photo2Path).forEach { p ->
                         if (p.isNotBlank()) { try { java.io.File(p).delete() } catch (_: Exception) {} }

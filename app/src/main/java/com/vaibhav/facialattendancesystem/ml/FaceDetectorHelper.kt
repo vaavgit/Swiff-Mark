@@ -22,6 +22,8 @@ data class DetectedFace(
     val boundingBox: RectF,
     val confidence: Float,
     val smilingProbability: Float? = null,
+    val leftEyeOpenProbability: Float? = null,
+    val rightEyeOpenProbability: Float? = null,
     val headEulerAngleX: Float = 0f,
     val headEulerAngleY: Float = 0f,
     val headEulerAngleZ: Float = 0f,
@@ -63,7 +65,7 @@ class FaceDetectorHelper(
         return try {
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             val task = detector.process(inputImage)
-            val mlkitFaces = Tasks.await(task)
+            val mlkitFaces = Tasks.await(task, 4, java.util.concurrent.TimeUnit.SECONDS)
 
             val detectedFaces = mutableListOf<DetectedFace>()
             val imageWidth = bitmap.width.toFloat()
@@ -101,6 +103,8 @@ class FaceDetectorHelper(
                             boundingBox = rectF,
                             confidence = 0.95f,
                             smilingProbability = face.smilingProbability,
+                            leftEyeOpenProbability = face.leftEyeOpenProbability,
+                            rightEyeOpenProbability = face.rightEyeOpenProbability,
                             headEulerAngleX = face.headEulerAngleX,
                             headEulerAngleY = face.headEulerAngleY,
                             headEulerAngleZ = face.headEulerAngleZ,

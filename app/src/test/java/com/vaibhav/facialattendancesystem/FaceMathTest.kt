@@ -75,13 +75,13 @@ class FaceMathTest {
     @Test
     fun testAssignMultiFaceMatches_resolvesCollisionsGreedily() {
         val face1Candidates = listOf(
-            RecognitionCandidate("student_A", 101, "Student Alpha", 0.35f, 0.65f),
-            RecognitionCandidate("student_B", 102, "Student Beta", 0.75f, 0.25f)
+            RecognitionCandidate("student_A", "101", "Student Alpha", 0.35f, 0.65f),
+            RecognitionCandidate("student_B", "102", "Student Beta", 0.75f, 0.25f)
         )
 
         val face2Candidates = listOf(
-            RecognitionCandidate("student_A", 101, "Student Alpha", 0.58f, 0.42f),
-            RecognitionCandidate("student_B", 102, "Student Beta", 0.60f, 0.40f)
+            RecognitionCandidate("student_A", "101", "Student Alpha", 0.58f, 0.42f),
+            RecognitionCandidate("student_B", "102", "Student Beta", 0.60f, 0.40f)
         )
 
         val allCandidates = mapOf(
@@ -101,12 +101,12 @@ class FaceMathTest {
     @Test
     fun testAssignMultiFaceMatches_rejectsStrangerBelowThreshold() {
         val face1Candidates = listOf(
-            RecognitionCandidate("student_A", 101, "Student Alpha", 0.45f, 0.55f)
+            RecognitionCandidate("student_A", "101", "Student Alpha", 0.45f, 0.55f)
         )
 
         val face2Candidates = listOf(
-            RecognitionCandidate("student_A", 101, "Student Alpha", 0.78f, 0.22f),
-            RecognitionCandidate("student_B", 102, "Student Beta", 0.81f, 0.19f)
+            RecognitionCandidate("student_A", "101", "Student Alpha", 0.78f, 0.22f),
+            RecognitionCandidate("student_B", "102", "Student Beta", 0.81f, 0.19f)
         )
 
         val allCandidates = mapOf(
@@ -123,15 +123,15 @@ class FaceMathTest {
     @Test
     fun testAssignMultiFaceMatches_benchOfThreeStudents() {
         val face1Candidates = listOf(
-            RecognitionCandidate("s1", 101, "Student 1", 0.40f, 0.60f),
-            RecognitionCandidate("s2", 102, "Student 2", 0.65f, 0.35f)
+            RecognitionCandidate("s1", "101", "Student 1", 0.40f, 0.60f),
+            RecognitionCandidate("s2", "102", "Student 2", 0.65f, 0.35f)
         )
         val face2Candidates = listOf(
-            RecognitionCandidate("s2", 102, "Student 2", 0.45f, 0.55f),
-            RecognitionCandidate("s1", 101, "Student 1", 0.68f, 0.32f)
+            RecognitionCandidate("s2", "102", "Student 2", 0.45f, 0.55f),
+            RecognitionCandidate("s1", "101", "Student 1", 0.68f, 0.32f)
         )
         val face3Candidates = listOf(
-            RecognitionCandidate("s3", 103, "Student 3", 0.52f, 0.48f)
+            RecognitionCandidate("s3", "103", "Student 3", 0.52f, 0.48f)
         )
 
         val allCandidates = mapOf(

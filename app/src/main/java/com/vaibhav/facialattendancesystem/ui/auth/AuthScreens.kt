@@ -480,8 +480,9 @@ fun SignUpScreen(
     // Passkey is a client-side registration gate for the teacher portal.
     // Replace with server-side role verification in a production deployment.
     val isPasskeyValid = facultyPasskey.trim().uppercase() in listOf("TEACHER2026", "FACULTY2026", "SWIFF2026")
-    val isStudentValid = fullName.isNotBlank() && isEmailValid && password.length >= 8 && rollNumberStr.isNotBlank() && hasConsented
-    val isTeacherValid = fullName.isNotBlank() && isEmailValid && password.length >= 8 && teacherDepartment.isNotBlank() && isPasskeyValid
+    val isPasswordStrong = password.length >= 8 && password.any { it.isUpperCase() } && password.any { it.isDigit() }
+    val isStudentValid = fullName.isNotBlank() && isEmailValid && isPasswordStrong && rollNumberStr.isNotBlank() && hasConsented
+    val isTeacherValid = fullName.isNotBlank() && isEmailValid && isPasswordStrong && teacherDepartment.isNotBlank() && isPasskeyValid
     val isFormValid = !isLoading && (if (isTeacherRole) isTeacherValid else isStudentValid)
 
     Box(
@@ -550,6 +551,21 @@ fun SignUpScreen(
                 onTogglePasswordVisibility = { passwordVisible = !passwordVisible }
             )
 
+            if (password.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val passLen = password.length >= 8
+                    val passUpper = password.any { it.isUpperCase() }
+                    val passDigit = password.any { it.isDigit() }
+                    PasswordRuleChip(label = "8+ chars", passed = passLen)
+                    PasswordRuleChip(label = "Uppercase", passed = passUpper)
+                    PasswordRuleChip(label = "Number", passed = passDigit)
+                }
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             // Role specific fields
@@ -563,7 +579,6 @@ fun SignUpScreen(
                         onValueChange = { rollNumberStr = it },
                         label = "Roll number",
                         placeholder = "21BCE1001",
-                        keyboardType = KeyboardType.Number,
                         modifier = Modifier.weight(1f)
                     )
                     PrototypeFieldRow(
@@ -1021,5 +1036,24 @@ fun ResetPasswordScreen(
                 modifier = Modifier.clickable { onBackToLogin() }
             )
         }
+    }
+}
+
+@Composable
+private fun PasswordRuleChip(label: String, passed: Boolean) {
+    val bgColor = if (passed) SuccessGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
+    val textColor = if (passed) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    val icon = if (passed) "✓ " else "○ "
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = bgColor
+    ) {
+        Text(
+            text = "$icon$label",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = textColor,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
     }
 }

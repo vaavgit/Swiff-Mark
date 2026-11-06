@@ -78,4 +78,57 @@ object NotificationHelper {
             e.printStackTrace()
         }
     }
+
+    fun schedulePhoto2Reminder(
+        context: Context,
+        classId: String,
+        className: String,
+        delayMinutes: Long = 40
+    ) {
+        try {
+            val workData = androidx.work.workDataOf(
+                "class_id" to classId,
+                "class_name" to className
+            )
+            val reminderWork = androidx.work.OneTimeWorkRequestBuilder<Photo2ReminderWorker>()
+                .setInitialDelay(delayMinutes, java.util.concurrent.TimeUnit.MINUTES)
+                .setInputData(workData)
+                .addTag("photo2_reminder_$classId")
+                .build()
+
+            androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                "photo2_reminder_$classId",
+                androidx.work.ExistingWorkPolicy.REPLACE,
+                reminderWork
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun cancelPhoto2Reminder(context: Context, classId: String) {
+        try {
+            androidx.work.WorkManager.getInstance(context).cancelUniqueWork("photo2_reminder_$classId")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+
+class Photo2ReminderWorker(
+    appContext: Context,
+    workerParams: androidx.work.WorkerParameters
+) : androidx.work.CoroutineWorker(appContext, workerParams) {
+    override suspend fun doWork(): Result {
+        val classId = inputData.getString("class_id") ?: return Result.success()
+        val className = inputData.getString("class_name") ?: "Class"
+        NotificationHelper.showAttendanceNotification(
+            context = applicationContext,
+            title = "Photo 2 Reminder 📸",
+            message = "Time to capture Photo 2 to finalize attendance for $className.",
+            classId = classId,
+            className = className
+        )
+        return Result.success()
+    }
 }

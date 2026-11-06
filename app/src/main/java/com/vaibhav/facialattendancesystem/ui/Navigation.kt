@@ -495,6 +495,28 @@ fun AppNavigation(
                     onEnrollmentComplete = { capturedSteps, averagedVector ->
                         scope.launch(Dispatchers.IO) {
                             val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
+
+                            // Check cross-account duplicate faces (biometric conflict prevention)
+                            val otherEmbeddings = db.faceEmbeddingDao().getAllEmbeddingsExcept(studentId)
+                            var duplicateStudentName: String? = null
+                            var maxSim = 0f
+                            for (other in otherEmbeddings) {
+                                val vec = converters.byteArrayToFloatArray(other.embeddingVector) ?: continue
+                                val sim = com.vaibhav.facialattendancesystem.ml.FaceMath.cosineSimilarity(averagedVector, vec)
+                                if (sim >= 0.42f && sim > maxSim) {
+                                    maxSim = sim
+                                    val existingStudent = db.studentDao().getStudentById(other.studentId)
+                                    duplicateStudentName = existingStudent?.fullName ?: "another registered student"
+                                }
+                            }
+
+                            if (duplicateStudentName != null) {
+                                withContext(Dispatchers.Main) {
+                                    showBanner("Biometric Conflict: Face already registered to $duplicateStudentName. Enrollment blocked.", true)
+                                }
+                                return@launch
+                            }
+
                             val embeddings = capturedSteps.map { step ->
                                 FaceEmbedding(
                                     studentId = studentId,
@@ -1376,7 +1398,7 @@ fun AppNavigation(
                                 }
                                 context.startActivity(browserIntent)
                             } catch (e: Exception) {
-                                Log.e("Navigation", "Could not open release page", e)
+                                android.util.Log.e("Navigation", "Could not open release page", e)
                             }
                             availableUpdate = null
                         },

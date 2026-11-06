@@ -52,6 +52,7 @@ class AuthViewModel(
     ) {
         _isLoading.value = true
         _authError.value = null
+
         viewModelScope.launch(Dispatchers.IO) {
             val authResult = SupabaseAuthManager.signInWithPassword(email, password)
             when (authResult) {
@@ -208,6 +209,13 @@ class AuthViewModel(
     ) {
         _isLoading.value = true
         _authError.value = null
+
+        if (password.length < 8 || !password.any { it.isUpperCase() } || !password.any { it.isDigit() }) {
+            _isLoading.value = false
+            onBanner("Password must be at least 8 characters, include an uppercase letter and a number.", true)
+            return
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             val authResult = SupabaseAuthManager.signUp(
                 email = email,
@@ -278,6 +286,13 @@ class AuthViewModel(
     ) {
         _isLoading.value = true
         _authError.value = null
+
+        if (password.length < 8 || !password.any { it.isUpperCase() } || !password.any { it.isDigit() }) {
+            _isLoading.value = false
+            onBanner("Password must be at least 8 characters, include an uppercase letter and a number.", true)
+            return
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             val authResult = SupabaseAuthManager.signUp(
                 email = email,

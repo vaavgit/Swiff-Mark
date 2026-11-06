@@ -112,6 +112,9 @@ interface FaceEmbeddingDao {
     @Query("SELECT * FROM face_embeddings")
     fun getAllEmbeddings(): List<FaceEmbedding>
 
+    @Query("SELECT * FROM face_embeddings WHERE student_id != :studentId")
+    fun getAllEmbeddingsExcept(studentId: String): List<FaceEmbedding>
+
     @Query("DELETE FROM face_embeddings WHERE student_id = :studentId")
     fun deleteEmbeddingsForStudent(studentId: String): Int
 
