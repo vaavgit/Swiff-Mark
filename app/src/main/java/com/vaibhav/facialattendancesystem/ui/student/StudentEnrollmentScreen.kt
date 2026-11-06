@@ -8,7 +8,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -83,10 +85,15 @@ data class CapturedStepData(
 fun StudentEnrollmentScreen(
     studentId: String,
     studentName: String,
-    onEnrollmentComplete: (List<CapturedStepData>, FloatArray) -> Unit
+    onEnrollmentComplete: (List<CapturedStepData>, FloatArray) -> Unit,
+    onSkip: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    androidx.activity.compose.BackHandler(enabled = onSkip != null) {
+        onSkip?.invoke()
+    }
 
     val detectorHelper = remember { FaceDetectorHelper(context) }
     val classifierHelper = remember { FaceClassifierHelper(context) }
@@ -189,11 +196,20 @@ fun StudentEnrollmentScreen(
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp
             )
-            Text(
-                text = studentName,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp
-            )
+            if (onSkip != null) {
+                TextButton(
+                    onClick = onSkip,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text("Skip for now", color = PrimaryCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else {
+                Text(
+                    text = studentName,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp
+                )
+            }
         }
 
         // Dot progress row

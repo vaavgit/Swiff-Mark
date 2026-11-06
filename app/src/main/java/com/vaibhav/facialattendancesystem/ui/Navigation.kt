@@ -561,6 +561,11 @@ fun AppNavigation(
                                 )
                             }
                         }
+                    },
+                    onSkip = {
+                        navController.navigate(Screen.StudentDashboard.createRoute(studentId)) {
+                            popUpTo(0)
+                        }
                     }
                 )
                 } // end if (consentGiven)

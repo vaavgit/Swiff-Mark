@@ -604,7 +604,7 @@ fun JoinClassDialog(
                 OutlinedTextField(
                     value = code,
                     onValueChange = { newVal ->
-                        code = formatClassCodeInput(newVal, code)
+                        code = newVal.uppercase().filter { it.isLetterOrDigit() || it == '-' }.take(8)
                     },
                     label = { Text("Class Code") },
                     placeholder = { Text("e.g. AI-7081") },
@@ -621,7 +621,11 @@ fun JoinClassDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onJoin(code) },
+                onClick = {
+                    val clean = code.trim().uppercase()
+                    val normalized = if (clean.contains("-") || clean.length <= 2) clean else "${clean.take(2)}-${clean.drop(2)}"
+                    onJoin(normalized)
+                },
                 enabled = code.isNotBlank(),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
