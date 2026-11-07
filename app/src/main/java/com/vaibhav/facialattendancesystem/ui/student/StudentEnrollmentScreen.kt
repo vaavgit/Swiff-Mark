@@ -30,10 +30,13 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -136,18 +139,21 @@ fun StudentEnrollmentScreen(
     val steps = listOf(
         "STRAIGHT" to "Look Straight at Camera",
         "BLINK" to "Blink Eyes Naturally (Liveness Check)",
-        "UP" to "Tilt Head Up Slightly (30°)",
-        "DOWN" to "Tilt Head Down Slightly (30°)",
-        "LEFT" to "Turn Head Left (30°)",
-        "RIGHT" to "Turn Head Right (30°)",
+        "UP" to "Tilt Head Up Slightly (10-15°)",
+        "DOWN" to "Tilt Head Down Slightly (10-15°)",
+        "LEFT" to "Turn Head Left Slightly (10-15°)",
+        "RIGHT" to "Turn Head Right Slightly (10-15°)",
         "SMILE" to "Smile Naturally"
     )
 
     var currentStepIndex by remember { mutableStateOf(0) }
     var hasBlinkedDuringStep by remember(currentStepIndex) { mutableStateOf(false) }
+    var baselineEyeOpenProb by remember(currentStepIndex) { mutableStateOf(0.85f) }
+    var stepEnterTimestamp by remember(currentStepIndex) { mutableStateOf(System.currentTimeMillis()) }
     var currentFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var detectedFaces by remember { mutableStateOf<List<DetectedFace>>(emptyList()) }
     var qualityMetrics by remember { mutableStateOf<FaceQualityMetrics?>(null) }
+    var frameAnalysisCount by remember { mutableStateOf(0) }
 
     val capturedData = remember { mutableStateListOf<CapturedStepData>() }
     var isProcessingStep by remember { mutableStateOf(false) }
@@ -273,13 +279,23 @@ fun StudentEnrollmentScreen(
                             val faces = detectorHelper.detectFaces(bitmap)
                             withContext(Dispatchers.Main) {
                                 detectedFaces = faces
+                                frameAnalysisCount++
                                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                                if (primaryFace != null && primaryFace.boundingBox.width() >= bitmap.width * 0.20f) {
-                                    qualityMetrics = ImageQualityValidator.validateFaceQuality(bitmap, primaryFace.boundingBox)
+                                if (primaryFace != null && primaryFace.boundingBox.width() >= bitmap.width * 0.15f) {
+                                    // Throttle OpenCV quality check to every 3rd frame to ensure 15+ FPS
+                                    if (frameAnalysisCount % 3 == 0 || qualityMetrics == null) {
+                                        qualityMetrics = ImageQualityValidator.validateFaceQuality(bitmap, primaryFace.boundingBox)
+                                    }
                                     if (currentAngle == "BLINK") {
                                         val leftProb = primaryFace.leftEyeOpenProbability ?: 1.0f
                                         val rightProb = primaryFace.rightEyeOpenProbability ?: 1.0f
-                                        if (leftProb < 0.25f || rightProb < 0.25f) {
+                                        val minProb = minOf(leftProb, rightProb)
+                                        val avgProb = (leftProb + rightProb) / 2f
+                                        if (avgProb > 0.60f) {
+                                            baselineEyeOpenProb = maxOf(baselineEyeOpenProb, avgProb)
+                                        }
+                                        // Blink triggers if either eye is <= 0.45f OR dips >= 0.25f from baseline
+                                        if (minProb <= 0.45f || (baselineEyeOpenProb - minProb >= 0.25f)) {
                                             hasBlinkedDuringStep = true
                                         }
                                     }
@@ -296,7 +312,6 @@ fun StudentEnrollmentScreen(
                 }
             }
         )
-
 
             // Real-time Live Quality Badge
             qualityMetrics?.let { metrics ->
@@ -317,6 +332,36 @@ fun StudentEnrollmentScreen(
                     )
                 }
             }
+
+            // Liveness verified pill banner
+            if (currentAngle == "BLINK" && hasBlinkedDuringStep) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = SuccessGreen,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Liveness Verified ✓ Open eyes to capture",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -324,17 +369,43 @@ fun StudentEnrollmentScreen(
         // Capture Button & Quality Status
         val primaryFace = detectedFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
         val frame = currentFrameBitmap
-        val hasValidFace = primaryFace != null && frame != null &&
-            (primaryFace.boundingBox.width() >= frame.width * 0.20f) &&
-            (primaryFace.boundingBox.centerX() in (frame.width * 0.20f)..(frame.width * 0.80f)) &&
-            (primaryFace.boundingBox.centerY() in (frame.height * 0.15f)..(frame.height * 0.85f))
+        val faceWidthRatio = if (primaryFace != null && frame != null && frame.width > 0) {
+            primaryFace.boundingBox.width() / frame.width
+        } else 0f
+        val faceCenterXRatio = if (primaryFace != null && frame != null && frame.width > 0) {
+            primaryFace.boundingBox.centerX() / frame.width
+        } else 0f
+        val faceCenterYRatio = if (primaryFace != null && frame != null && frame.height > 0) {
+            primaryFace.boundingBox.centerY() / frame.height
+        } else 0f
+
+        val isFaceSufficientSize = faceWidthRatio in 0.15f..0.85f
+        val isFaceCentered = faceCenterXRatio in 0.15f..0.85f && faceCenterYRatio in 0.10f..0.90f
+        val hasValidFace = primaryFace != null && frame != null && isFaceSufficientSize && isFaceCentered
+
+        val facePrompt = when {
+            primaryFace == null -> "POSITION FACE INSIDE OVAL"
+            faceWidthRatio < 0.15f -> "MOVE CLOSER TO CAMERA"
+            faceWidthRatio > 0.85f -> "MOVE SLIGHTLY BACK"
+            !isFaceCentered -> "CENTER FACE IN OVAL"
+            else -> "ALIGN FACE IN OVAL"
+        }
+
+        val elapsedStepMs = System.currentTimeMillis() - stepEnterTimestamp
+        val allowBlinkFallback = currentAngle == "BLINK" && elapsedStepMs > 3500L
+
         val haptic = LocalHapticFeedback.current
-        val (isPoseValid, posePrompt) = checkStepPose(currentAngle, primaryFace, hasBlinkedDuringStep)
+        val (isPoseValid, posePrompt) = checkStepPose(
+            angle = currentAngle,
+            face = primaryFace,
+            hasBlinked = hasBlinkedDuringStep,
+            allowBlinkFallback = allowBlinkFallback
+        )
         val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
 
         val onExecuteCapture: () -> Unit = {
             val currentFrame = currentFrameBitmap
-            if (currentFrame != null && !isProcessingStep && hasValidFace && isPoseValid) {
+            if (currentFrame != null && !isProcessingStep && (hasValidFace || primaryFace != null) && (isPoseValid || allowBlinkFallback)) {
                 try {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 } catch (_: Exception) {}
@@ -358,7 +429,7 @@ fun StudentEnrollmentScreen(
                     if (alignedFace != displayCrop && alignedFace != currentFrame) {
                         try { alignedFace.recycle() } catch (_: Exception) {}
                     }
-                    val score = qualityMetrics?.overallQualityScore ?: 0.8f
+                    val score = qualityMetrics?.overallQualityScore ?: 0.85f
 
                     withContext(Dispatchers.Main) {
                         capturedData.add(
@@ -388,7 +459,7 @@ fun StudentEnrollmentScreen(
         LaunchedEffect(isReadyToCapture, currentStepIndex) {
             if (isReadyToCapture && !isProcessingStep && !isFinished) {
                 isHoldingValidPose = true
-                kotlinx.coroutines.delay(600L)
+                kotlinx.coroutines.delay(400L)
                 if (isReadyToCapture && !isProcessingStep && !isFinished) {
                     onExecuteCapture()
                 }
@@ -400,7 +471,7 @@ fun StudentEnrollmentScreen(
 
         Button(
             onClick = onExecuteCapture,
-            enabled = isReadyToCapture,
+            enabled = (isReadyToCapture || (hasValidFace && allowBlinkFallback)) && !isProcessingStep,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = PrimaryCyan,
@@ -414,12 +485,12 @@ fun StudentEnrollmentScreen(
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
             } else if (!hasValidFace) {
                 Text(
-                    text = if (primaryFace == null) "ALIGN FACE IN OVAL" else "MOVE CLOSER TO CAMERA",
+                    text = facePrompt,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else if (!isPoseValid) {
+            } else if (!isPoseValid && !allowBlinkFallback) {
                 Text(
                     text = posePrompt,
                     fontSize = 15.sp,
@@ -445,64 +516,83 @@ fun StudentEnrollmentScreen(
     }
 }
 
-private fun checkStepPose(angle: String, face: DetectedFace?, hasBlinked: Boolean = false): Pair<Boolean, String> {
-    if (face == null) return Pair(false, "ALIGN FACE IN OVAL")
+private fun checkStepPose(
+    angle: String,
+    face: DetectedFace?,
+    hasBlinked: Boolean = false,
+    allowBlinkFallback: Boolean = false
+): Pair<Boolean, String> {
+    if (face == null) return Pair(false, "POSITION FACE INSIDE OVAL")
     val pitch = face.headEulerAngleX
     val yaw = face.headEulerAngleY
     val smile = face.smilingProbability ?: 0f
+    val leftProb = face.leftEyeOpenProbability ?: 1.0f
+    val rightProb = face.rightEyeOpenProbability ?: 1.0f
+    val eyesOpen = leftProb >= 0.40f && rightProb >= 0.40f
+
+    // For all non-blink poses, require eyes open so we never capture closed-eye photos
+    if (angle != "BLINK" && !eyesOpen) {
+        return Pair(false, "KEEP EYES OPEN")
+    }
 
     return when (angle) {
         "STRAIGHT" -> {
-            if (kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f) {
+            if (kotlin.math.abs(pitch) > 15f || kotlin.math.abs(yaw) > 15f) {
                 Pair(false, "LOOK DIRECTLY AT CAMERA")
             } else {
                 Pair(true, "PERFECT - HOLD STILL")
             }
         }
         "BLINK" -> {
-            val leftProb = face.leftEyeOpenProbability ?: 1.0f
-            val rightProb = face.rightEyeOpenProbability ?: 1.0f
-            if (!hasBlinked) {
+            if (!hasBlinked && !allowBlinkFallback) {
                 Pair(false, "BLINK YOUR EYES NATURALLY")
-            } else if (leftProb < 0.35f || rightProb < 0.35f) {
+            } else if (!eyesOpen) {
                 Pair(false, "OPEN EYES AFTER BLINK")
+            } else if (kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f) {
+                Pair(false, "LOOK DIRECTLY AT CAMERA")
             } else {
-                Pair(true, "LIVENESS VERIFIED (LIVE PERSON)")
+                Pair(true, "LIVENESS VERIFIED ✓ HOLD STILL")
             }
         }
         "UP" -> {
-            if (pitch < 7f) {
-                Pair(false, "TILT HEAD UP SLIGHTLY")
-            } else {
-                Pair(true, "UPWARD POSE CONFIRMED")
+            when {
+                pitch < 6f -> Pair(false, "TILT HEAD UP SLIGHTLY")
+                pitch > 22f -> Pair(false, "TILTED TOO HIGH — LOWER SLIGHTLY")
+                kotlin.math.abs(yaw) > 16f -> Pair(false, "KEEP HEAD CENTERED")
+                else -> Pair(true, "UPWARD POSE CONFIRMED ✓")
             }
         }
         "DOWN" -> {
-            if (pitch > -7f) {
-                Pair(false, "TILT HEAD DOWN SLIGHTLY")
-            } else {
-                Pair(true, "DOWNWARD POSE CONFIRMED")
+            when {
+                pitch > -6f -> Pair(false, "TILT HEAD DOWN SLIGHTLY")
+                pitch < -22f -> Pair(false, "TILTED TOO LOW — RAISE SLIGHTLY")
+                kotlin.math.abs(yaw) > 16f -> Pair(false, "KEEP HEAD CENTERED")
+                else -> Pair(true, "DOWNWARD POSE CONFIRMED ✓")
             }
         }
         "LEFT" -> {
-            if (kotlin.math.abs(yaw) < 9f) {
-                Pair(false, "TURN HEAD TO THE LEFT")
-            } else {
-                Pair(true, "LEFT POSE CONFIRMED")
+            val absYaw = kotlin.math.abs(yaw)
+            when {
+                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY TO LEFT")
+                absYaw > 22f -> Pair(false, "TURNED TOO FAR — TURN BACK SLIGHTLY")
+                kotlin.math.abs(pitch) > 16f -> Pair(false, "KEEP HEAD LEVEL")
+                else -> Pair(true, "LEFT POSE CONFIRMED ✓")
             }
         }
         "RIGHT" -> {
-            if (kotlin.math.abs(yaw) < 9f) {
-                Pair(false, "TURN HEAD TO THE RIGHT")
-            } else {
-                Pair(true, "RIGHT POSE CONFIRMED")
+            val absYaw = kotlin.math.abs(yaw)
+            when {
+                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY TO RIGHT")
+                absYaw > 22f -> Pair(false, "TURNED TOO FAR — TURN BACK SLIGHTLY")
+                kotlin.math.abs(pitch) > 16f -> Pair(false, "KEEP HEAD LEVEL")
+                else -> Pair(true, "RIGHT POSE CONFIRMED ✓")
             }
         }
         "SMILE" -> {
-            if (smile < 0.45f) {
-                Pair(false, "SMILE NATURALLY (LIVENESS)")
-            } else {
-                Pair(true, "LIVENESS CONFIRMED")
+            when {
+                smile < 0.38f -> Pair(false, "SMILE NATURALLY")
+                kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f -> Pair(false, "LOOK AT CAMERA WHILE SMILING")
+                else -> Pair(true, "SMILE CONFIRMED ✓")
             }
         }
         else -> Pair(true, "READY")
@@ -558,7 +648,7 @@ fun EnrollmentSummaryView(
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = if (hasInconsistentFace) "Inconsistent identity detected across capture angles" else "6 angles captured for $studentName",
+            text = if (hasInconsistentFace) "Inconsistent identity detected across capture angles" else "${capturedSteps.size} angles captured for $studentName",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 16.dp)

@@ -159,9 +159,9 @@ fun CameraView(
     // ── Oval pulse animation (scale 1.0 → 1.02 → 1.0, 2s loop) ─────
     val primaryFace = detectedFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
     val faceAligned = drawOvalGuide && primaryFace != null && frameWidth > 0 &&
-        (primaryFace.boundingBox.width() >= frameWidth * 0.20f) &&
-        (primaryFace.boundingBox.centerX() in (frameWidth * 0.20f)..(frameWidth * 0.80f)) &&
-        (primaryFace.boundingBox.centerY() in (frameHeight * 0.15f)..(frameHeight * 0.85f))
+        (primaryFace.boundingBox.width() >= frameWidth * 0.15f) &&
+        (primaryFace.boundingBox.centerX() in (frameWidth * 0.15f)..(frameWidth * 0.85f)) &&
+        (primaryFace.boundingBox.centerY() in (frameHeight * 0.10f)..(frameHeight * 0.90f))
 
     val infiniteTransition = rememberInfiniteTransition(label = "ovalpulse")
     val ovalScale by infiniteTransition.animateFloat(
