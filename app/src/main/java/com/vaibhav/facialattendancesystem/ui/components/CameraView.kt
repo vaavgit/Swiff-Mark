@@ -49,6 +49,7 @@ fun CameraView(
     detectedFaces: List<DetectedFace> = emptyList(),
     drawBoundingBoxes: Boolean = true,
     drawOvalGuide: Boolean = false,
+    progressFraction: Float = 0f,
     onFrameAnalyzed: ((Bitmap) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -198,13 +199,26 @@ fun CameraView(
                 val ovalWidth  = minOf(canvasWidth * 0.72f, 290.dp.toPx()) * ovalScale
                 val ovalHeight = ovalWidth * 1.25f
 
-                // Oval stroke — cyan normally, green when aligned
+                // Base track
                 drawOval(
-                    color    = ovalColor.copy(alpha = 0.7f),
+                    color    = ovalColor.copy(alpha = 0.35f),
                     topLeft  = Offset(centerX - ovalWidth / 2f, centerY - ovalHeight / 2f),
                     size     = ComposeSize(ovalWidth, ovalHeight),
                     style    = Stroke(width = 3.dp.toPx())
                 )
+
+                // Animated Apple Face ID style biometric progress arc around the oval
+                if (progressFraction > 0f) {
+                    drawArc(
+                        color      = SuccessGreen,
+                        startAngle = -90f,
+                        sweepAngle = (progressFraction.coerceIn(0f, 1f)) * 360f,
+                        useCenter  = false,
+                        topLeft    = Offset(centerX - ovalWidth / 2f, centerY - ovalHeight / 2f),
+                        size       = ComposeSize(ovalWidth, ovalHeight),
+                        style      = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
 
                 // Green checkmark badge when face is inside oval
                 if (faceAligned) {

@@ -137,18 +137,13 @@ fun StudentEnrollmentScreen(
     }
 
     val steps = listOf(
-        "STRAIGHT" to "Look Straight at Camera",
-        "BLINK" to "Blink Eyes Naturally (Liveness Check)",
-        "UP" to "Tilt Head Up Slightly (10-15°)",
-        "DOWN" to "Tilt Head Down Slightly (10-15°)",
-        "LEFT" to "Turn Head Left Slightly (10-15°)",
-        "RIGHT" to "Turn Head Right Slightly (10-15°)",
-        "SMILE" to "Smile Naturally"
+        "STRAIGHT" to "Look Directly at Camera",
+        "LEFT" to "Turn Head Slowly Left (10-15°)",
+        "RIGHT" to "Turn Head Slowly Right (10-15°)",
+        "SMILE" to "Smile Naturally (Liveness Check)"
     )
 
     var currentStepIndex by remember { mutableStateOf(0) }
-    var hasBlinkedDuringStep by remember(currentStepIndex) { mutableStateOf(false) }
-    var baselineEyeOpenProb by remember(currentStepIndex) { mutableStateOf(0.85f) }
     var stepEnterTimestamp by remember(currentStepIndex) { mutableStateOf(System.currentTimeMillis()) }
     var currentFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var detectedFaces by remember { mutableStateOf<List<DetectedFace>>(emptyList()) }
@@ -173,10 +168,9 @@ fun StudentEnrollmentScreen(
     }
 
     val (currentAngle, currentInstruction) = steps[currentStepIndex]
+    val progressFraction = currentStepIndex.toFloat() / steps.size.toFloat()
 
     Column(
-
-
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
@@ -186,9 +180,7 @@ fun StudentEnrollmentScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
-
-
-        // ── Dot Step Indicator ────────────────────────────────────
+        // ── Header & Step Indicator ────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -197,7 +189,7 @@ fun StudentEnrollmentScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Step ${currentStepIndex + 1} / ${steps.size}  ·  ${currentAngle}",
+                text = "Biometric Setup · Step ${currentStepIndex + 1} of ${steps.size}",
                 color = PrimaryCyan,
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp
@@ -218,25 +210,31 @@ fun StudentEnrollmentScreen(
             }
         }
 
-        // Dot progress row
+        // 4 Segmented story-style progress bars (Apple / Revolut KYC style)
         Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.padding(bottom = 8.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            repeat(steps.size) { i ->
+            steps.forEachIndexed { i, _ ->
                 Box(
                     modifier = Modifier
-                        .size(if (i == currentStepIndex) 10.dp else 7.dp)
-                        .clip(CircleShape)
+                        .weight(1f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
                         .background(
-                            if (i <= currentStepIndex) PrimaryCyan
-                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            when {
+                                i < currentStepIndex -> SuccessGreen
+                                i == currentStepIndex -> PrimaryCyan
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+                            }
                         )
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(2.dp))
 
         Text(
             text = currentInstruction,
@@ -247,13 +245,12 @@ fun StudentEnrollmentScreen(
         )
 
         Text(
-            text = "Keep your face inside the oval",
+            text = "Center face in the oval and follow the prompts",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = PrimaryCyan,
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
         )
-
 
     val isAnalyzingFrame = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
@@ -271,6 +268,7 @@ fun StudentEnrollmentScreen(
             detectedFaces = detectedFaces,
             drawBoundingBoxes = false,
             drawOvalGuide = true,
+            progressFraction = progressFraction,
             onFrameAnalyzed = { bitmap ->
                 currentFrameBitmap = bitmap
                 if (isAnalyzingFrame.compareAndSet(false, true)) {
@@ -282,22 +280,8 @@ fun StudentEnrollmentScreen(
                                 frameAnalysisCount++
                                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
                                 if (primaryFace != null && primaryFace.boundingBox.width() >= bitmap.width * 0.15f) {
-                                    // Throttle OpenCV quality check to every 3rd frame to ensure 15+ FPS
                                     if (frameAnalysisCount % 3 == 0 || qualityMetrics == null) {
                                         qualityMetrics = ImageQualityValidator.validateFaceQuality(bitmap, primaryFace.boundingBox)
-                                    }
-                                    if (currentAngle == "BLINK") {
-                                        val leftProb = primaryFace.leftEyeOpenProbability ?: 1.0f
-                                        val rightProb = primaryFace.rightEyeOpenProbability ?: 1.0f
-                                        val minProb = minOf(leftProb, rightProb)
-                                        val avgProb = (leftProb + rightProb) / 2f
-                                        if (avgProb > 0.60f) {
-                                            baselineEyeOpenProb = maxOf(baselineEyeOpenProb, avgProb)
-                                        }
-                                        // Blink triggers if either eye is <= 0.45f OR dips >= 0.25f from baseline
-                                        if (minProb <= 0.45f || (baselineEyeOpenProb - minProb >= 0.25f)) {
-                                            hasBlinkedDuringStep = true
-                                        }
                                     }
                                 } else {
                                     qualityMetrics = null
@@ -333,31 +317,77 @@ fun StudentEnrollmentScreen(
                 }
             }
 
-            // Liveness verified pill banner
-            if (currentAngle == "BLINK" && hasBlinkedDuringStep) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = SuccessGreen,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 16.dp)
+            // Real-time Live Guidance Floating Pill (Apple Face ID / Revolut style)
+            val primaryFace = detectedFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+            val frame = currentFrameBitmap
+            val faceWidthRatio = if (primaryFace != null && frame != null && frame.width > 0) {
+                primaryFace.boundingBox.width() / frame.width
+            } else 0f
+            val faceCenterXRatio = if (primaryFace != null && frame != null && frame.width > 0) {
+                primaryFace.boundingBox.centerX() / frame.width
+            } else 0f
+            val faceCenterYRatio = if (primaryFace != null && frame != null && frame.height > 0) {
+                primaryFace.boundingBox.centerY() / frame.height
+            } else 0f
+
+            val isFaceSufficientSize = faceWidthRatio in 0.15f..0.85f
+            val isFaceCentered = faceCenterXRatio in 0.15f..0.85f && faceCenterYRatio in 0.10f..0.90f
+            val hasValidFace = primaryFace != null && frame != null && isFaceSufficientSize && isFaceCentered
+
+            val facePrompt = when {
+                primaryFace == null -> "POSITION FACE INSIDE OVAL"
+                faceWidthRatio < 0.15f -> "MOVE CLOSER TO CAMERA"
+                faceWidthRatio > 0.85f -> "MOVE SLIGHTLY BACK"
+                !isFaceCentered -> "CENTER FACE IN OVAL"
+                else -> "ALIGN FACE IN OVAL"
+            }
+
+            val elapsedStepMs = System.currentTimeMillis() - stepEnterTimestamp
+            val allowEyeGrace = elapsedStepMs > 2500L
+
+            val haptic = LocalHapticFeedback.current
+            val (isPoseValid, posePrompt) = checkStepPose(
+                angle = currentAngle,
+                face = primaryFace,
+                allowEyeGrace = allowEyeGrace
+            )
+            val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
+
+            var isHoldingValidPose by remember { mutableStateOf(false) }
+
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = if (isHoldingValidPose) SuccessGreen.copy(alpha = 0.95f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Liveness Verified ✓ Open eyes to capture",
+                    if (isHoldingValidPose) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
                             color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "HOLD STILL... CAPTURING!",
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 13.sp
+                        )
+                    } else {
+                        val promptText = if (!hasValidFace) facePrompt else posePrompt
+                        val promptColor = if (!hasValidFace) MaterialTheme.colorScheme.onSurfaceVariant else if (isPoseValid) SuccessGreen else WarningAmber
+                        Text(
+                            text = promptText,
+                            color = promptColor,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
                         )
                     }
                 }
@@ -392,20 +422,19 @@ fun StudentEnrollmentScreen(
         }
 
         val elapsedStepMs = System.currentTimeMillis() - stepEnterTimestamp
-        val allowBlinkFallback = currentAngle == "BLINK" && elapsedStepMs > 3500L
+        val allowEyeGrace = elapsedStepMs > 2500L
 
         val haptic = LocalHapticFeedback.current
         val (isPoseValid, posePrompt) = checkStepPose(
             angle = currentAngle,
             face = primaryFace,
-            hasBlinked = hasBlinkedDuringStep,
-            allowBlinkFallback = allowBlinkFallback
+            allowEyeGrace = allowEyeGrace
         )
         val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
 
         val onExecuteCapture: () -> Unit = {
             val currentFrame = currentFrameBitmap
-            if (currentFrame != null && !isProcessingStep && (hasValidFace || primaryFace != null) && (isPoseValid || allowBlinkFallback)) {
+            if (currentFrame != null && !isProcessingStep && (hasValidFace || primaryFace != null) && (isPoseValid || allowEyeGrace)) {
                 try {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 } catch (_: Exception) {}
@@ -455,11 +484,11 @@ fun StudentEnrollmentScreen(
 
         var isHoldingValidPose by remember { mutableStateOf(false) }
 
-        // Hands-free auto capture: automatically captures when user holds the verified pose
+        // Hands-free fast auto capture (Apple Face ID style - 350ms hold)
         LaunchedEffect(isReadyToCapture, currentStepIndex) {
             if (isReadyToCapture && !isProcessingStep && !isFinished) {
                 isHoldingValidPose = true
-                kotlinx.coroutines.delay(400L)
+                kotlinx.coroutines.delay(350L)
                 if (isReadyToCapture && !isProcessingStep && !isFinished) {
                     onExecuteCapture()
                 }
@@ -471,7 +500,7 @@ fun StudentEnrollmentScreen(
 
         Button(
             onClick = onExecuteCapture,
-            enabled = (isReadyToCapture || (hasValidFace && allowBlinkFallback)) && !isProcessingStep,
+            enabled = (isReadyToCapture || (hasValidFace && allowEyeGrace)) && !isProcessingStep,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = PrimaryCyan,
@@ -490,7 +519,7 @@ fun StudentEnrollmentScreen(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else if (!isPoseValid && !allowBlinkFallback) {
+            } else if (!isPoseValid && !allowEyeGrace) {
                 Text(
                     text = posePrompt,
                     fontSize = 15.sp,
@@ -519,8 +548,7 @@ fun StudentEnrollmentScreen(
 private fun checkStepPose(
     angle: String,
     face: DetectedFace?,
-    hasBlinked: Boolean = false,
-    allowBlinkFallback: Boolean = false
+    allowEyeGrace: Boolean = false
 ): Pair<Boolean, String> {
     if (face == null) return Pair(false, "POSITION FACE INSIDE OVAL")
     val pitch = face.headEulerAngleX
@@ -528,71 +556,43 @@ private fun checkStepPose(
     val smile = face.smilingProbability ?: 0f
     val leftProb = face.leftEyeOpenProbability ?: 1.0f
     val rightProb = face.rightEyeOpenProbability ?: 1.0f
-    val eyesOpen = leftProb >= 0.40f && rightProb >= 0.40f
+    val eyesOpen = allowEyeGrace || (leftProb >= 0.35f && rightProb >= 0.35f)
 
-    // For all non-blink poses, require eyes open so we never capture closed-eye photos
-    if (angle != "BLINK" && !eyesOpen) {
+    if (!eyesOpen) {
         return Pair(false, "KEEP EYES OPEN")
     }
 
     return when (angle) {
         "STRAIGHT" -> {
-            if (kotlin.math.abs(pitch) > 15f || kotlin.math.abs(yaw) > 15f) {
+            if (kotlin.math.abs(pitch) > 14f || kotlin.math.abs(yaw) > 14f) {
                 Pair(false, "LOOK DIRECTLY AT CAMERA")
             } else {
-                Pair(true, "PERFECT - HOLD STILL")
-            }
-        }
-        "BLINK" -> {
-            if (!hasBlinked && !allowBlinkFallback) {
-                Pair(false, "BLINK YOUR EYES NATURALLY")
-            } else if (!eyesOpen) {
-                Pair(false, "OPEN EYES AFTER BLINK")
-            } else if (kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f) {
-                Pair(false, "LOOK DIRECTLY AT CAMERA")
-            } else {
-                Pair(true, "LIVENESS VERIFIED ✓ HOLD STILL")
-            }
-        }
-        "UP" -> {
-            when {
-                pitch < 6f -> Pair(false, "TILT HEAD UP SLIGHTLY")
-                pitch > 22f -> Pair(false, "TILTED TOO HIGH — LOWER SLIGHTLY")
-                kotlin.math.abs(yaw) > 16f -> Pair(false, "KEEP HEAD CENTERED")
-                else -> Pair(true, "UPWARD POSE CONFIRMED ✓")
-            }
-        }
-        "DOWN" -> {
-            when {
-                pitch > -6f -> Pair(false, "TILT HEAD DOWN SLIGHTLY")
-                pitch < -22f -> Pair(false, "TILTED TOO LOW — RAISE SLIGHTLY")
-                kotlin.math.abs(yaw) > 16f -> Pair(false, "KEEP HEAD CENTERED")
-                else -> Pair(true, "DOWNWARD POSE CONFIRMED ✓")
+                Pair(true, "PERFECT — HOLD STILL")
             }
         }
         "LEFT" -> {
             val absYaw = kotlin.math.abs(yaw)
             when {
-                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY TO LEFT")
-                absYaw > 22f -> Pair(false, "TURNED TOO FAR — TURN BACK SLIGHTLY")
+                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY LEFT")
+                absYaw > 24f -> Pair(false, "TURNED TOO FAR — LOOK MORE FORWARD")
                 kotlin.math.abs(pitch) > 16f -> Pair(false, "KEEP HEAD LEVEL")
-                else -> Pair(true, "LEFT POSE CONFIRMED ✓")
+                else -> Pair(true, "LEFT ANGLE LOCKED ✓")
             }
         }
         "RIGHT" -> {
             val absYaw = kotlin.math.abs(yaw)
             when {
-                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY TO RIGHT")
-                absYaw > 22f -> Pair(false, "TURNED TOO FAR — TURN BACK SLIGHTLY")
+                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY RIGHT")
+                absYaw > 24f -> Pair(false, "TURNED TOO FAR — LOOK MORE FORWARD")
                 kotlin.math.abs(pitch) > 16f -> Pair(false, "KEEP HEAD LEVEL")
-                else -> Pair(true, "RIGHT POSE CONFIRMED ✓")
+                else -> Pair(true, "RIGHT ANGLE LOCKED ✓")
             }
         }
         "SMILE" -> {
             when {
-                smile < 0.38f -> Pair(false, "SMILE NATURALLY")
+                smile < 0.35f -> Pair(false, "SMILE NATURALLY (LIVENESS)")
                 kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f -> Pair(false, "LOOK AT CAMERA WHILE SMILING")
-                else -> Pair(true, "SMILE CONFIRMED ✓")
+                else -> Pair(true, "LIVENESS CONFIRMED ✓")
             }
         }
         else -> Pair(true, "READY")
@@ -673,18 +673,18 @@ fun EnrollmentSummaryView(
         }
 
         LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            columns = GridCells.Fixed(2),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.weight(1f)
         ) {
             items(capturedSteps) { step ->
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .border(1.dp, adaptiveBorderColor(), RoundedCornerShape(12.dp))
-                        .padding(8.dp),
+                        .border(1.dp, adaptiveBorderColor(), RoundedCornerShape(14.dp))
+                        .padding(10.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -692,13 +692,19 @@ fun EnrollmentSummaryView(
                             bitmap = step.bitmap.asImageBitmap(),
                             contentDescription = step.stepAngle,
                             modifier = Modifier
-                                .size(88.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .size(112.dp)
+                                .clip(RoundedCornerShape(10.dp))
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = step.stepAngle,
-                            fontSize = 11.sp,
+                            text = when (step.stepAngle) {
+                                "STRAIGHT" -> "1. Frontal"
+                                "LEFT" -> "2. Left 3D"
+                                "RIGHT" -> "3. Right 3D"
+                                "SMILE" -> "4. Smile (Liveness)"
+                                else -> step.stepAngle
+                            },
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = PrimaryCyan,
                             textAlign = TextAlign.Center
