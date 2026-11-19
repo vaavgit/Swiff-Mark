@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -49,6 +51,7 @@ fun CameraView(
     detectedFaces: List<DetectedFace> = emptyList(),
     drawBoundingBoxes: Boolean = true,
     drawOvalGuide: Boolean = false,
+    useWhiteFlash: Boolean = false,
     progressFraction: Float = 0f,
     onFrameAnalyzed: ((Bitmap) -> Unit)? = null
 ) {
@@ -199,9 +202,27 @@ fun CameraView(
                 val ovalWidth  = minOf(canvasWidth * 0.72f, 290.dp.toPx()) * ovalScale
                 val ovalHeight = ovalWidth * 1.25f
 
+                // Aadhaar FaceRD / KYC style Luminous White Fill Flash
+                // Renders a brilliant white surround mask outside the oval, acting as a frontal ring-light
+                val cutoutPath = Path().apply {
+                    addRect(Rect(0f, 0f, canvasWidth, canvasHeight))
+                    val ovalHole = Path().apply {
+                        addOval(
+                            Rect(
+                                centerX - ovalWidth / 2f,
+                                centerY - ovalHeight / 2f,
+                                centerX + ovalWidth / 2f,
+                                centerY + ovalHeight / 2f
+                            )
+                        )
+                    }
+                    op(this, ovalHole, PathOperation.Difference)
+                }
+                drawPath(cutoutPath, color = Color.White.copy(alpha = if (useWhiteFlash) 0.94f else 0.40f))
+
                 // Base track
                 drawOval(
-                    color    = ovalColor.copy(alpha = 0.35f),
+                    color    = ovalColor.copy(alpha = 0.50f),
                     topLeft  = Offset(centerX - ovalWidth / 2f, centerY - ovalHeight / 2f),
                     size     = ComposeSize(ovalWidth, ovalHeight),
                     style    = Stroke(width = 3.dp.toPx())

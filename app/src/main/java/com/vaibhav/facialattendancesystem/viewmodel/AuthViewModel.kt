@@ -73,7 +73,7 @@ class AuthViewModel(
                         return@launch
                     }
 
-                    sessionManager.saveLoginCredentials(email, isTeacher, saveLogin)
+                    sessionManager.savePortalLogin(email, password, isTeacher, saveLogin)
                     CloudSyncManager.setAuthToken(authResult.accessToken)
 
                     var localUser = db.userDao().getUserByEmail(email)

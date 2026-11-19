@@ -325,6 +325,9 @@ object CloudSyncManager {
 
                 val embs = embeddingsMap[sId]
                 if (embs != null && embs.isNotEmpty()) {
+                    // Only replace local embeddings when cloud returns a non-empty set.
+                    // Previously this always deleted first — if the POST to cloud failed silently,
+                    // the student would have zero local embeddings and never be recognized.
                     db.faceEmbeddingDao().deleteEmbeddingsForStudent(sId)
                     for ((base64, angle) in embs) {
                         try {
@@ -338,6 +341,9 @@ object CloudSyncManager {
                         } catch (ex: Exception) { Log.e(TAG, "Failed inserting embedding for student $sId", ex) }
                     }
                 }
+                // If cloud returns empty embeddings for a student, keep whatever is in local Room.
+                // This handles the case where the student enrolled on a different device and the
+                // cloud upload failed — local embeddings remain usable.
             }
             Pair(true, "Synced ${studentIds.size} students.")
         } catch (e: Exception) { Pair(false, e.localizedMessage ?: "Sync Error") }

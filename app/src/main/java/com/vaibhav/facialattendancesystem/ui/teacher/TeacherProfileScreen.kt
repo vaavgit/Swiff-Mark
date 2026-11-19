@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vaibhav.facialattendancesystem.ui.components.CircularImageCropperDialog
 import com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper
 import com.vaibhav.facialattendancesystem.data.Teacher
 import com.vaibhav.facialattendancesystem.ui.components.adaptiveBorderColor
@@ -82,17 +83,42 @@ fun TeacherProfileScreen(
         }
     }
 
+    var bitmapToCrop by remember { mutableStateOf<Bitmap?>(null) }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            val saved = ProfileImageHelper.saveProfileImageFromUri(context, actualTeacherId, uri)
-            if (saved) {
-                profileBitmap = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
-                // Upload to cloud so students can see it
-                scope.launch { CloudSyncManager.uploadProfileAvatar(context, actualTeacherId) }
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val original = android.graphics.BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (original != null) {
+                    bitmapToCrop = original
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
+    }
+
+    bitmapToCrop?.let { bmp ->
+        CircularImageCropperDialog(
+            sourceBitmap = bmp,
+            onDismiss = {
+                try { bmp.recycle() } catch (_: Exception) {}
+                bitmapToCrop = null
+            },
+            onCropConfirmed = { cropped ->
+                val saved = ProfileImageHelper.saveProfileBitmap(context, actualTeacherId, cropped)
+                if (saved) {
+                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, actualTeacherId)
+                    scope.launch { CloudSyncManager.uploadProfileAvatar(context, actualTeacherId) }
+                }
+                try { bmp.recycle() } catch (_: Exception) {}
+                bitmapToCrop = null
+            }
+        )
     }
 
     Column(
@@ -205,32 +231,54 @@ fun TeacherProfileScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            listOf(
-                Triple("$classesCount", "Classes", PrimaryCyan),
-                Triple("Active", "AI Engine", SuccessGreen)
-            ).forEach { (value, label, color) ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .border(1.dp, borderColor, RoundedCornerShape(16.dp))
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = value,
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = color
-                        )
-                        Text(
-                            text = label,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            // Classes assigned card
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$classesCount",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = PrimaryCyan
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Assigned Classes",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            // Faculty status card
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Active",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = SuccessGreen
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Profile Status",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -247,10 +295,15 @@ fun TeacherProfileScreen(
                 .padding(20.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                listOf(
-                    "Department" to (if (currentDept.isNotBlank()) currentDept else "Computer Science"),
-                    "Subject"    to (if (currentSubject.isNotBlank()) currentSubject else "Machine Learning")
-                ).forEachIndexed { i, (label, value) ->
+                val facultyIdShort = if (actualTeacherId.isNotBlank()) "#${actualTeacherId.take(8).uppercase()}" else "Verified"
+                // Subject field removed: a teacher can teach multiple subjects.
+                // Subjects are automatically derived from the classes they create.
+                val infoRows = listOf(
+                    "Role"       to "Faculty Instructor",
+                    "Department" to (if (currentDept.isNotBlank()) currentDept else "—"),
+                    "Faculty ID" to facultyIdShort
+                )
+                infoRows.forEachIndexed { i, (label, value) ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -258,7 +311,7 @@ fun TeacherProfileScreen(
                         Text(label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(value, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     }
-                    if (i < 1) HorizontalDivider(color = dividerColor, thickness = 1.dp)
+                    if (i < infoRows.size - 1) HorizontalDivider(color = dividerColor, thickness = 1.dp)
                 }
             }
         }

@@ -439,9 +439,12 @@ fun TeacherClassCard(
                 }
             }
 
-            // Subject · Section
+            // Department · Section display
             Text(
-                text = "${clazz.subject} · Sec ${clazz.section}",
+                text = listOf(
+                    clazz.subject.ifBlank { null },  // subject stores department
+                    clazz.section.ifBlank { null }
+                ).filterNotNull().joinToString(" · ").ifBlank { "Sem ${clazz.semester}" },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp)
@@ -536,20 +539,14 @@ fun CreateClassDialog(
     onDismiss: () -> Unit,
     onCreate: (name: String, subject: String, semester: Int, section: String) -> Unit
 ) {
-    var subject by remember { mutableStateOf("") }
+    var department by remember { mutableStateOf("") }
+    var courseName by remember { mutableStateOf("") }
+    var classSection by remember { mutableStateOf("") }
     var semesterStr by remember { mutableStateOf("1") }
-    var section by remember { mutableStateOf("A") }
 
-    val autoClassName = if (section.isNotBlank()) {
-        "${subject.trim()} - Sec ${section.trim()}"
-    } else {
-        subject.trim()
-    }
-
-    val previewCode = if (subject.isNotBlank()) {
-        val cleanSubj = subject.trim().uppercase().replace(Regex("[^A-Z]"), "").take(2).padEnd(2, 'X')
-        "$cleanSubj-####"
-    } else ""
+    // className is built from department + courseName for display, stored in className field
+    // section holds the class identifier (e.g. "5B"), department goes into subject field
+    val autoClassName = courseName.trim()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -558,10 +555,21 @@ fun CreateClassDialog(
         title = { Text("Create new class", fontWeight = FontWeight.Bold, color = PrimaryCyan) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Department field
                 OutlinedTextField(
-                    value = subject,
-                    onValueChange = { subject = it },
-                    label = { Text("Subject (e.g. AI ML, DSA, Python)") },
+                    value = department,
+                    onValueChange = { department = it },
+                    label = { Text("Department (e.g. BCA, MCA, B.Tech)") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                // Course / Subject name
+                OutlinedTextField(
+                    value = courseName,
+                    onValueChange = { courseName = it },
+                    label = { Text("Course Name (e.g. Artificial Intelligence)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                     shape = RoundedCornerShape(10.dp),
@@ -579,30 +587,41 @@ fun CreateClassDialog(
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
-                        value = section,
-                        onValueChange = { section = it },
-                        label = { Text("Section") },
+                        value = classSection,
+                        onValueChange = { classSection = it },
+                        label = { Text("Class (e.g. 5B, 3A)") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = PrimaryCyan),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     )
                 }
-                AnimatedVisibility(visible = previewCode.isNotBlank(), enter = fadeIn(tween(200))) {
+                // Live preview of how it'll appear on the class card
+                AnimatedVisibility(visible = courseName.isNotBlank(), enter = fadeIn(tween(200))) {
                     Surface(shape = RoundedCornerShape(8.dp), color = PrimaryCyan.copy(alpha = 0.10f), modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "Code will look like: $previewCode",
-                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = PrimaryCyan,
-                            modifier = Modifier.padding(10.dp)
-                        )
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "Preview: ${courseName.trim()}",
+                                fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PrimaryCyan
+                            )
+                            if (department.isNotBlank() || classSection.isNotBlank()) {
+                                Text(
+                                    text = listOf(department.trim(), classSection.trim()).filter { it.isNotBlank() }.joinToString(" · "),
+                                    fontSize = 11.sp, color = PrimaryCyan.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
                     }
                 }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(autoClassName, subject.trim(), semesterStr.toIntOrNull() ?: 1, section.trim()) },
-                enabled = subject.isNotBlank(),
+                onClick = {
+                    // className = course name, subject = department, section = classSection
+                    onCreate(autoClassName, department.trim(), semesterStr.toIntOrNull() ?: 1, classSection.trim())
+                },
+                enabled = courseName.isNotBlank(),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan)
             ) { Text("Create & generate code", color = Color.White, fontWeight = FontWeight.Bold) }

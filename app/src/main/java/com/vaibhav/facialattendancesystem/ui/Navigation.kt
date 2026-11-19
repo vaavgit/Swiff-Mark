@@ -256,11 +256,19 @@ fun AppNavigation(
                 NavHost(navController = navController, startDestination = startDestination) {
 
             composable(Screen.Login.route) {
+                val initIsTeacher = sessionManager.getSavedIsTeacher()
                 LoginScreen(
-                    initialEmail = sessionManager.getSavedEmail(),
-                    initialPassword = "",
-                    initialIsTeacher = sessionManager.getSavedIsTeacher(),
-                    initialSaveLogin = sessionManager.isSaveLoginEnabled(),
+                    initialEmail = sessionManager.getSavedPortalEmail(initIsTeacher),
+                    initialPassword = sessionManager.getSavedPortalPassword(initIsTeacher),
+                    initialIsTeacher = initIsTeacher,
+                    initialSaveLogin = sessionManager.isPortalSaveEnabled(initIsTeacher),
+                    onPortalChanged = { isTeacher ->
+                        Triple(
+                            sessionManager.getSavedPortalEmail(isTeacher),
+                            sessionManager.getSavedPortalPassword(isTeacher),
+                            sessionManager.isPortalSaveEnabled(isTeacher)
+                        )
+                    },
                     onLoginClick = { email, password, isTeacher, saveLogin ->
                         authViewModel.login(
                             email = email,
@@ -1064,6 +1072,17 @@ fun AppNavigation(
                         }
                     }
                 } else {
+                    // Show a persistent banner if roster loaded but zero students have valid embeddings
+                    // — this tells the teacher exactly why recognition will return 0 results.
+                    LaunchedEffect(allEmbeddingsData, enrolledStudents) {
+                        if (!isLoadingRoster && enrolledStudents.isNotEmpty() && allEmbeddingsData.isEmpty()) {
+                            showBanner(
+                                "⚠ No face profiles found for ${enrolledStudents.size} student(s). " +
+                                "Ask students to open Swiff Mark and re-enroll their face.",
+                                true
+                            )
+                        }
+                    }
                     ClassroomAttendanceScreen(
                         className = className,
                         classId = classId,

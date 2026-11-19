@@ -2,6 +2,7 @@ package com.vaibhav.facialattendancesystem.ml
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.util.Log
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
@@ -79,6 +80,13 @@ class FaceClassifierHelper(private val context: Context) {
     /**
      * Extracts face embedding vector from cropped face Bitmap.
      * Normalized BGR format [-1.0, 1.0] matching AdaFace requirements.
+     *
+     * Upgraded with Flip-Fusion (Horizontal TTA - Test Time Augmentation):
+     * Computes embeddings for both the canonical face chip and its horizontal mirror:
+     * v_fused = L2(v_orig + v_flip).
+     * This mathematically guarantees that the feature vector is 100% invariant
+     * to camera mirroring (front camera vs back camera) and increases SNR for
+     * distant faces (1m-3m in classrooms).
      */
     fun getFaceEmbedding(faceBitmap: Bitmap): FloatArray {
         val tflite = interpreter ?: run {
@@ -88,17 +96,30 @@ class FaceClassifierHelper(private val context: Context) {
 
         // 1. Resize cropped face to inputSize x inputSize
         val resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, inputSize, inputSize, true)
+        val vec1 = extractSingleEmbedding(tflite, resizedBitmap)
 
-        // 2. Preprocess into float ByteBuffer normalized: (pixel - 127.5) / 127.5 into [-1.0, 1.0] with BGR channel order
+        // 2. Flip-Fusion: extract embedding of horizontally mirrored face
+        val matrix = Matrix().apply { postScale(-1f, 1f) }
+        val flippedBitmap = Bitmap.createBitmap(resizedBitmap, 0, 0, resizedBitmap.width, resizedBitmap.height, matrix, true)
+        val vec2 = extractSingleEmbedding(tflite, flippedBitmap)
+
+        if (resizedBitmap != faceBitmap) {
+            try { resizedBitmap.recycle() } catch (_: Exception) {}
+        }
+        try { flippedBitmap.recycle() } catch (_: Exception) {}
+
+        // 3. Vector sum and L2 normalize
+        val fused = FloatArray(outputDim) { i -> vec1[i] + vec2[i] }
+        return l2Normalize(fused)
+    }
+
+    private fun extractSingleEmbedding(tflite: Interpreter, bitmap: Bitmap): FloatArray {
         val imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4).apply {
             order(ByteOrder.nativeOrder())
         }
 
         val intValues = IntArray(inputSize * inputSize)
-        resizedBitmap.getPixels(intValues, 0, inputSize, 0, 0, inputSize, inputSize)
-        if (resizedBitmap != faceBitmap) {
-            try { resizedBitmap.recycle() } catch (_: Exception) {}
-        }
+        bitmap.getPixels(intValues, 0, inputSize, 0, 0, inputSize, inputSize)
 
         for (pixelValue in intValues) {
             val r = (pixelValue shr 16 and 0xFF)
@@ -111,13 +132,9 @@ class FaceClassifierHelper(private val context: Context) {
             imgData.putFloat((r - 127.5f) / 127.5f)
         }
 
-        // 3. Run inference
         val outputBuffer = Array(1) { FloatArray(outputDim) }
         tflite.run(imgData, outputBuffer)
-
-        // 4. L2 Normalize the output vector
-        val rawVector = outputBuffer[0]
-        return l2Normalize(rawVector)
+        return outputBuffer[0]
     }
 
     private fun l2Normalize(vector: FloatArray): FloatArray {

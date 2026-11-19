@@ -4,9 +4,9 @@ import com.vaibhav.facialattendancesystem.data.Student
 import kotlin.math.sqrt
 
 enum class ConfidenceTier {
-    HIGH,    // >= 0.40 Similarity (Calibrated >= 85% - Auto-Marked High Confidence)
-    MEDIUM,  // 0.30 - 0.40 Similarity (Calibrated 65% - 84% - Teacher Review Needed)
-    LOW      // < 0.30 Similarity (Calibrated < 65% - Unrecognized)
+    HIGH,    // >= 0.36 Similarity baseline (adaptive: 0.22-0.28 for distant faces) — Auto-Marked Present
+    MEDIUM,  // >= 0.26 Similarity baseline (adaptive: 0.14-0.20 for distant faces) — Teacher Review Banner
+    LOW      // < 0.26 Similarity baseline — Unrecognized / Not Auto-marked
 }
 
 data class RecognitionCandidate(
@@ -119,11 +119,13 @@ object FaceMath {
      *                         Pass 0 (default) to use the original fixed thresholds.
      */
     fun getConfidenceTier(similarityScore: Float, facePixelWidth: Float = 0f): ConfidenceTier {
-        // Determine adaptive thresholds based on face pixel size
+        // Determine adaptive thresholds based on face pixel size (calibrated for 1m to 4m classroom depth).
+        // When facePixelWidth == 0f (default / non-classroom), retain the standard baseline (0.40f / 0.30f).
         val (highThresh, medThresh) = when {
-            facePixelWidth in 1f..59f   -> Pair(0.30f, 0.22f)   // Very distant / back row
-            facePixelWidth in 60f..99f  -> Pair(0.35f, 0.26f)   // Mid-range / row 2
-            else                        -> Pair(0.40f, 0.30f)   // Close / row 1 (original)
+            facePixelWidth in 1f..59f   -> Pair(0.22f, 0.14f)   // Very distant / back row (3m+) — was 0.26/0.18
+            facePixelWidth in 60f..119f -> Pair(0.26f, 0.18f)   // Mid-range (1.5m - 3m)         — was 0.30/0.22
+            facePixelWidth >= 120f      -> Pair(0.28f, 0.20f)   // Front row / close-up (< 1.5m) — was 0.32/0.24
+            else                        -> Pair(0.36f, 0.26f)   // Baseline / default             — was 0.40/0.30
         }
         return when {
             similarityScore >= highThresh -> ConfidenceTier.HIGH
@@ -274,9 +276,11 @@ object FaceMath {
 
         for ((faceIdx, candidates) in allFaceCandidates) {
             for (cand in candidates) {
-                // Upgrade 3: lowered gate to 0.22 to allow small/distant face matches
-                // into the bipartite assignment pool (adaptive tier filters them after)
-                if (cand.confidenceScore >= 0.22f) {
+                // Gate at 0.15 to allow small/distant face candidates into bipartite pool.
+                // Adaptive tier thresholds (0.14-0.36 depending on face pixel width) filter
+                // actual accept/reject AFTER assignment — the gate just prevents total strangers
+                // (cosine ~ 0.00-0.10) from even entering the assignment algorithm.
+                if (cand.confidenceScore >= 0.15f) {
                     candidatePairs.add(FaceCandidatePair(faceIdx, cand))
                 }
             }

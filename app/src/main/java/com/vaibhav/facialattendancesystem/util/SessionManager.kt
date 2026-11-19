@@ -73,6 +73,15 @@ class SessionManager(context: Context) {
         private const val KEY_SAVE_LOGIN_ENABLED = "saved_login_enabled"
         private const val KEY_SAVED_EMAIL = "saved_login_email"
         private const val KEY_SAVED_IS_TEACHER = "saved_login_is_teacher"
+
+        // Separate portal credential memory (Student vs Teacher)
+        private const val KEY_STUDENT_EMAIL = "student_saved_email"
+        private const val KEY_STUDENT_PASS  = "student_saved_password"
+        private const val KEY_STUDENT_SAVE  = "student_save_login_enabled"
+
+        private const val KEY_TEACHER_EMAIL = "teacher_saved_email"
+        private const val KEY_TEACHER_PASS  = "teacher_saved_password"
+        private const val KEY_TEACHER_SAVE  = "teacher_save_login_enabled"
     }
 
     init {
@@ -162,28 +171,61 @@ class SessionManager(context: Context) {
 
     fun isLoggedIn(): Boolean = securePrefs.getString(KEY_USER_ID, null) != null
 
-    // ── Save Login Credentials ──────────────────────────────────────────────────
+    // ── Save Login Credentials (Dual-Portal Memory) ─────────────────────────────
 
-    fun saveLoginCredentials(email: String, isTeacher: Boolean, save: Boolean) {
+    fun savePortalLogin(email: String, password: String, isTeacher: Boolean, save: Boolean) {
         val editor = securePrefs.edit()
-        editor.putBoolean(KEY_SAVE_LOGIN_ENABLED, save)
-        if (save) {
-            editor.putString(KEY_SAVED_EMAIL, email.trim())
-            editor.putBoolean(KEY_SAVED_IS_TEACHER, isTeacher)
+        editor.putBoolean(KEY_SAVED_IS_TEACHER, isTeacher)
+        if (isTeacher) {
+            editor.putBoolean(KEY_TEACHER_SAVE, save)
+            if (save) {
+                editor.putString(KEY_TEACHER_EMAIL, email.trim())
+                editor.putString(KEY_TEACHER_PASS, password.trim())
+            } else {
+                editor.remove(KEY_TEACHER_EMAIL)
+                editor.remove(KEY_TEACHER_PASS)
+            }
         } else {
-            editor.remove(KEY_SAVED_EMAIL)
-            editor.remove(KEY_SAVED_IS_TEACHER)
+            editor.putBoolean(KEY_STUDENT_SAVE, save)
+            if (save) {
+                editor.putString(KEY_STUDENT_EMAIL, email.trim())
+                editor.putString(KEY_STUDENT_PASS, password.trim())
+            } else {
+                editor.remove(KEY_STUDENT_EMAIL)
+                editor.remove(KEY_STUDENT_PASS)
+            }
         }
         editor.commit()
     }
 
-    // Overload kept for compatibility with existing call sites.
+    fun getSavedPortalEmail(isTeacher: Boolean): String {
+        val key = if (isTeacher) KEY_TEACHER_EMAIL else KEY_STUDENT_EMAIL
+        val email = securePrefs.getString(key, "") ?: ""
+        if (email.isNotBlank()) return email
+        val legacy = securePrefs.getString(KEY_SAVED_EMAIL, "") ?: ""
+        return if (getSavedIsTeacher() == isTeacher) legacy else ""
+    }
+
+    fun getSavedPortalPassword(isTeacher: Boolean): String {
+        val key = if (isTeacher) KEY_TEACHER_PASS else KEY_STUDENT_PASS
+        return securePrefs.getString(key, "") ?: ""
+    }
+
+    fun isPortalSaveEnabled(isTeacher: Boolean): Boolean {
+        val key = if (isTeacher) KEY_TEACHER_SAVE else KEY_STUDENT_SAVE
+        return securePrefs.getBoolean(key, true)
+    }
+
+    fun saveLoginCredentials(email: String, isTeacher: Boolean, save: Boolean) {
+        savePortalLogin(email, "", isTeacher, save)
+    }
+
     fun saveLoginCredentials(email: String, password: String, isTeacher: Boolean, save: Boolean) {
-        saveLoginCredentials(email, isTeacher, save)
+        savePortalLogin(email, password, isTeacher, save)
     }
 
     fun isSaveLoginEnabled(): Boolean = securePrefs.getBoolean(KEY_SAVE_LOGIN_ENABLED, true)
-    fun getSavedEmail(): String = securePrefs.getString(KEY_SAVED_EMAIL, "") ?: ""
+    fun getSavedEmail(): String = getSavedPortalEmail(getSavedIsTeacher())
     fun getSavedIsTeacher(): Boolean = securePrefs.getBoolean(KEY_SAVED_IS_TEACHER, false)
 
     // ── Test Data Tracking (plain store) ────────────────────────────────────────

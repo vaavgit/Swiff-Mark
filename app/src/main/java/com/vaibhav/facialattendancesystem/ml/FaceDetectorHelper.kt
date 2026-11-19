@@ -65,7 +65,7 @@ class FaceDetectorHelper(
         return try {
             val inputImage = InputImage.fromBitmap(bitmap, 0)
             val task = detector.process(inputImage)
-            val mlkitFaces = Tasks.await(task, 4, java.util.concurrent.TimeUnit.SECONDS)
+            val mlkitFaces = Tasks.await(task, 15, java.util.concurrent.TimeUnit.SECONDS)
 
             val detectedFaces = mutableListOf<DetectedFace>()
             val imageWidth = bitmap.width.toFloat()

@@ -138,8 +138,8 @@ fun StudentEnrollmentScreen(
 
     val steps = listOf(
         "STRAIGHT" to "Look Directly at Camera",
-        "LEFT" to "Turn Head Slowly Left (10-15°)",
-        "RIGHT" to "Turn Head Slowly Right (10-15°)",
+        "LEFT" to "Turn Your Head to YOUR Right (10-15°)",
+        "RIGHT" to "Turn Your Head to YOUR Left (10-15°)",
         "SMILE" to "Smile Naturally (Liveness Check)"
     )
 
@@ -154,6 +154,24 @@ fun StudentEnrollmentScreen(
     var isProcessingStep by remember { mutableStateOf(false) }
     var isFinished by remember { mutableStateOf(false) }
 
+    // Aadhaar FaceRD style 100% Screen Brightness for front-facing ring-light fill flash
+    DisposableEffect(Unit) {
+        val activity = context as? android.app.Activity
+        val originalBrightness = activity?.window?.attributes?.screenBrightness ?: -1f
+        activity?.window?.let { win ->
+            val lp = win.attributes
+            lp.screenBrightness = 1.0f
+            win.attributes = lp
+        }
+        onDispose {
+            activity?.window?.let { win ->
+                val lp = win.attributes
+                lp.screenBrightness = if (originalBrightness >= 0f) originalBrightness else android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                win.attributes = lp
+            }
+        }
+    }
+
     if (isFinished) {
         val averagedVector = remember {
             FaceMath.averageEmbeddings(capturedData.map { it.embedding })
@@ -162,7 +180,13 @@ fun StudentEnrollmentScreen(
         EnrollmentSummaryView(
             studentName = studentName,
             capturedSteps = capturedData,
-            onConfirm = { onEnrollmentComplete(capturedData, averagedVector) }
+            onConfirm = { onEnrollmentComplete(capturedData, averagedVector) },
+            onReCapture = {
+                // Reset enrollment state to start over
+                capturedData.clear()
+                currentStepIndex = 0
+                isFinished = false
+            }
         )
         return
     }
@@ -268,6 +292,7 @@ fun StudentEnrollmentScreen(
             detectedFaces = detectedFaces,
             drawBoundingBoxes = false,
             drawOvalGuide = true,
+            useWhiteFlash = true,
             progressFraction = progressFraction,
             onFrameAnalyzed = { bitmap ->
                 currentFrameBitmap = bitmap
@@ -554,44 +579,39 @@ private fun checkStepPose(
     val pitch = face.headEulerAngleX
     val yaw = face.headEulerAngleY
     val smile = face.smilingProbability ?: 0f
-    val leftProb = face.leftEyeOpenProbability ?: 1.0f
-    val rightProb = face.rightEyeOpenProbability ?: 1.0f
-    val eyesOpen = allowEyeGrace || (leftProb >= 0.35f && rightProb >= 0.35f)
-
-    if (!eyesOpen) {
-        return Pair(false, "KEEP EYES OPEN")
-    }
 
     return when (angle) {
         "STRAIGHT" -> {
-            if (kotlin.math.abs(pitch) > 14f || kotlin.math.abs(yaw) > 14f) {
+            if (kotlin.math.abs(pitch) > 15f || kotlin.math.abs(yaw) > 14f) {
                 Pair(false, "LOOK DIRECTLY AT CAMERA")
             } else {
                 Pair(true, "PERFECT — HOLD STILL")
             }
         }
         "LEFT" -> {
-            val absYaw = kotlin.math.abs(yaw)
+            // In mirrored front camera view: turning head toward own left turns face right in camera image -> yaw > 0
             when {
-                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY LEFT")
-                absYaw > 24f -> Pair(false, "TURNED TOO FAR — LOOK MORE FORWARD")
-                kotlin.math.abs(pitch) > 16f -> Pair(false, "KEEP HEAD LEVEL")
-                else -> Pair(true, "LEFT ANGLE LOCKED ✓")
+                yaw < -6f -> Pair(false, "TURN HEAD TO YOUR LEFT (OTHER SIDE)")
+                yaw < 7f  -> Pair(false, "TURN HEAD SLOWLY LEFT")
+                yaw > 28f -> Pair(false, "TURNED TOO FAR — LOOK MORE FORWARD")
+                kotlin.math.abs(pitch) > 18f -> Pair(false, "KEEP HEAD LEVEL")
+                else -> Pair(true, "LEFT PROFILE LOCKED ✓")
             }
         }
         "RIGHT" -> {
-            val absYaw = kotlin.math.abs(yaw)
+            // In mirrored front camera view: turning head toward own right turns face left in camera image -> yaw < 0
             when {
-                absYaw < 7f -> Pair(false, "TURN HEAD SLIGHTLY RIGHT")
-                absYaw > 24f -> Pair(false, "TURNED TOO FAR — LOOK MORE FORWARD")
-                kotlin.math.abs(pitch) > 16f -> Pair(false, "KEEP HEAD LEVEL")
-                else -> Pair(true, "RIGHT ANGLE LOCKED ✓")
+                yaw > 6f  -> Pair(false, "TURN HEAD TO YOUR RIGHT (OTHER SIDE)")
+                yaw > -7f -> Pair(false, "TURN HEAD SLOWLY RIGHT")
+                yaw < -28f -> Pair(false, "TURNED TOO FAR — LOOK MORE FORWARD")
+                kotlin.math.abs(pitch) > 18f -> Pair(false, "KEEP HEAD LEVEL")
+                else -> Pair(true, "RIGHT PROFILE LOCKED ✓")
             }
         }
         "SMILE" -> {
             when {
-                smile < 0.35f -> Pair(false, "SMILE NATURALLY (LIVENESS)")
-                kotlin.math.abs(pitch) > 16f || kotlin.math.abs(yaw) > 16f -> Pair(false, "LOOK AT CAMERA WHILE SMILING")
+                smile < 0.30f -> Pair(false, "SMILE NATURALLY (LIVENESS)")
+                kotlin.math.abs(pitch) > 18f || kotlin.math.abs(yaw) > 18f -> Pair(false, "LOOK AT CAMERA WHILE SMILING")
                 else -> Pair(true, "LIVENESS CONFIRMED ✓")
             }
         }
@@ -603,7 +623,8 @@ private fun checkStepPose(
 fun EnrollmentSummaryView(
     studentName: String,
     capturedSteps: List<CapturedStepData>,
-    onConfirm: () -> Unit
+    onConfirm: () -> Unit,
+    onReCapture: (() -> Unit)? = null
 ) {
     var isSaving by remember { mutableStateOf(false) }
 
@@ -614,8 +635,11 @@ fun EnrollmentSummaryView(
             capturedSteps.any { step ->
                 if (step.stepAngle == "STRAIGHT") false
                 else {
+                    // Flip-Fusion embeddings are L2-normalized sums; pairwise cosine distances
+                    // between angles are naturally lower than raw embeddings.
+                    // Threshold lowered from 0.25 → 0.15 to avoid false "inconsistent" warnings.
                     val sim = FaceMath.cosineSimilarity(straightStep.embedding, step.embedding)
-                    sim < 0.25f
+                    sim < 0.15f
                 }
             }
         }
@@ -716,6 +740,27 @@ fun EnrollmentSummaryView(
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // If validation failed, show Re-capture as primary action
+        if (hasInconsistentFace && onReCapture != null) {
+            Button(
+                onClick = onReCapture,
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                Text(
+                    text = "🔄  RE-CAPTURE FACE PROFILE",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.sp,
+                    color = Color.White
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        // Save button — only enabled when validation passed
         Button(
             onClick = {
                 if (!isSaving && !hasInconsistentFace) {
@@ -726,8 +771,8 @@ fun EnrollmentSummaryView(
             enabled = !isSaving && !hasInconsistentFace,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = PrimaryCyan,
-                disabledContainerColor = PrimaryCyan.copy(alpha = 0.5f)
+                containerColor = if (hasInconsistentFace) MaterialTheme.colorScheme.surfaceVariant else PrimaryCyan,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
             ),
             modifier = Modifier
                 .fillMaxWidth()
@@ -753,10 +798,10 @@ fun EnrollmentSummaryView(
                 }
             } else {
                 Text(
-                    text = "SAVE PROFILE & JOIN CLASSES",
+                    text = if (hasInconsistentFace) "SAVE PROFILE & JOIN CLASSES (Low Confidence)" else "SAVE PROFILE & JOIN CLASSES",
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 15.sp,
-                    color = Color.White
+                    fontSize = if (hasInconsistentFace) 12.sp else 15.sp,
+                    color = if (hasInconsistentFace) MaterialTheme.colorScheme.onSurfaceVariant else Color.White
                 )
             }
         }

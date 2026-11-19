@@ -270,6 +270,7 @@ fun LoginScreen(
     initialPassword: String = "",
     initialIsTeacher: Boolean = false,
     initialSaveLogin: Boolean = true,
+    onPortalChanged: ((isTeacher: Boolean) -> Triple<String, String, Boolean>)? = null,
     errorMessage: String? = null,
     isLoading: Boolean = false
 ) {
@@ -278,6 +279,20 @@ fun LoginScreen(
     var isTeacherSelected by remember { mutableStateOf(initialIsTeacher) }
     var saveLoginInfo by remember { mutableStateOf(initialSaveLogin) }
     var passwordVisible by remember { mutableStateOf(false) }
+
+    // Auto-load respective portal's saved credentials when switching portals
+    var hasInitializedPortal by remember { mutableStateOf(false) }
+    LaunchedEffect(isTeacherSelected) {
+        if (hasInitializedPortal) {
+            onPortalChanged?.invoke(isTeacherSelected)?.let { (savedEmail, savedPass, savedEnabled) ->
+                email = savedEmail
+                password = savedPass
+                saveLoginInfo = savedEnabled
+            }
+        } else {
+            hasInitializedPortal = true
+        }
+    }
 
     val isDark = isAppDarkTheme()
     val isFormValid = !isLoading && email.isNotBlank() && password.isNotBlank()

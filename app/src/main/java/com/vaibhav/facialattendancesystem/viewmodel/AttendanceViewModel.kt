@@ -54,9 +54,14 @@ class AttendanceViewModel(
 
             val list = mutableListOf<Pair<Student, List<FloatArray>>>()
             for (s in students) {
+                // Accept ALL pipeline versions — Flip-Fusion in FaceClassifierHelper makes
+                // embeddings mirror-invariant regardless of when they were enrolled.
+                // Filtering to >= 2 silently dropped students enrolled before the Nov build,
+                // causing "not detected" for every student with a v1 embedding.
                 val embs = db.faceEmbeddingDao().getEmbeddingsForStudent(s.studentId)
-                    .filter { it.pipelineVersion >= 2 }
+                    .filter { it.embeddingVector.size >= 512 * 4 } // must be a valid 512-D float vector (512 floats × 4 bytes)
                     .mapNotNull { converters.byteArrayToFloatArray(it.embeddingVector) }
+                    .filter { it.size == 512 } // AdaFace always outputs exactly 512 dims
                 if (embs.isNotEmpty()) {
                     list.add(s to embs)
                 }

@@ -366,7 +366,10 @@ fun StudentDashboardScreen(
                                         )
                                     }
                                     Text(
-                                        text = "${clazz.subject} · Sec ${clazz.section}",
+                                        text = listOf(
+                                            clazz.subject.ifBlank { null },
+                                            clazz.section.ifBlank { null }
+                                        ).filterNotNull().joinToString(" · ").ifBlank { "Sem ${clazz.semester}" },
                                         fontSize = 11.5.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)

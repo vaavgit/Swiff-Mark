@@ -51,8 +51,8 @@ object FaceAligner {
         val rightEye = face.landmarks[FaceLandmark.RIGHT_EYE]
 
         if (leftEye == null || rightEye == null) {
-            // Landmarks unavailable -- fall back to padded bounding-box crop, then enhance
-            return FacePreprocessor.enhance(fallbackCrop(sourceBitmap, face))
+            // Landmarks unavailable -- fall back to padded bounding-box crop
+            return fallbackCrop(sourceBitmap, face)
         }
 
         val aligned = try {
@@ -84,8 +84,9 @@ object FaceAligner {
             fallbackCrop(sourceBitmap, face)
         }
 
-        // Upgrade 2: apply CLAHE + Unsharp Mask to the aligned 112×112 chip
-        return FacePreprocessor.enhance(aligned)
+        // Return clean canonical 112x112 chip without artificial CLAHE/USM distortion
+        // so AdaFace neural network sees natural facial gradients as trained.
+        return aligned
     }
 
     /**

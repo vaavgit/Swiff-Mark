@@ -12,9 +12,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.vaibhav.facialattendancesystem.ui.components.CameraPermissionFallbackCard
 import com.vaibhav.facialattendancesystem.ui.components.openAppSettings
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -141,8 +144,8 @@ private fun buildStudentStatuses(
             detectedInPhoto = detected,
             confidenceTier  = tier,
             matchConfidence = conf,
-            // Only HIGH confidence is auto-marked present; MEDIUM confidence requires teacher review
-            isMarkedPresent = isManual || (detected && tier == ConfidenceTier.HIGH)
+            // Auto-mark present if HIGH or MEDIUM confidence biometric match detected
+            isMarkedPresent = isManual || (detected && (tier == ConfidenceTier.HIGH || tier == ConfidenceTier.MEDIUM))
         )
     }
 }
@@ -341,9 +344,9 @@ fun ClassroomAttendanceScreen(
                             }
                             file.absolutePath
                         } catch (e: Exception) { "photo_1_${System.currentTimeMillis()}.jpg" }
-                        val results = withContext(Dispatchers.Default) {
-                            processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_1", recognitionLogDao)
-                        }
+                        // Use Dispatchers.IO (not Default) — ML Kit Tasks.await() is a blocking call.
+                        // Default dispatcher has only CPU-core threads; blocking it causes starvation/timeouts.
+                        val results = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_1", recognitionLogDao)
                         try { bitmap.recycle() } catch (_: Exception) {}
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
@@ -448,9 +451,8 @@ fun ClassroomAttendanceScreen(
                             }
                             file.absolutePath
                         } catch (e: Exception) { "photo_2_${System.currentTimeMillis()}.jpg" }
-                        val results = withContext(Dispatchers.Default) {
-                            processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_2", recognitionLogDao)
-                        }
+                        // Use Dispatchers.IO (not Default) — ML Kit Tasks.await() is a blocking call.
+                        val results = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_2", recognitionLogDao)
                         try { bitmap.recycle() } catch (_: Exception) {}
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
@@ -752,6 +754,12 @@ fun StudentStatusRow(status: StudentDetectionStatus, onToggle: () -> Unit) {
         else                                                                      -> "✕ Not detected in photo"
     }
 
+    val context = LocalContext.current
+    val avatarFile = remember(status.student.studentId) {
+        java.io.File(context.filesDir, "avatar_${status.student.studentId}.jpg")
+    }
+    val hasCustomAvatar = avatarFile.exists() && avatarFile.length() > 0L
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -762,27 +770,67 @@ fun StudentStatusRow(status: StudentDetectionStatus, onToggle: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically
     ) {
-        // Roll circle
+        // Avatar circle: custom uploaded picture OR first letter of full name
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(44.dp)
                 .clip(CircleShape)
-                .background(dotColor.copy(alpha = 0.18f)),
+                .background(if (hasCustomAvatar) Color.Transparent else dotColor.copy(alpha = 0.18f))
+                .border(1.5.dp, dotColor.copy(alpha = 0.35f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text       = "${status.student.rollNumber}",
-                fontSize   = 13.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color      = dotColor
-            )
+            if (hasCustomAvatar) {
+                val customBitmap = remember(avatarFile) {
+                    try { android.graphics.BitmapFactory.decodeFile(avatarFile.absolutePath) } catch (_: Exception) { null }
+                }
+                if (customBitmap != null) {
+                    Image(
+                        bitmap = customBitmap.asImageBitmap(),
+                        contentDescription = status.student.fullName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    val initial = status.student.fullName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S"
+                    Text(
+                        text = initial,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = dotColor
+                    )
+                }
+            } else {
+                val initial = status.student.fullName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "S"
+                Text(
+                    text = initial,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = dotColor
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(status.student.fullName, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-            Text(subLabel, fontSize = 11.sp, color = dotColor, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = status.student.fullName,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (status.student.rollNumber.isNotBlank()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "· ${status.student.rollNumber}",
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(subLabel, fontSize = 11.5.sp, color = dotColor, fontWeight = FontWeight.SemiBold)
         }
 
         // Toggle circle
@@ -1058,7 +1106,7 @@ private fun FinalStudentRow(student: Student, status: String, statusColor: Color
     ) {
         Column {
             Text(
-                "Roll ${student.rollNumber}: ${student.fullName}",
+                text       = if (student.rollNumber.isNotBlank()) "${student.fullName} · ${student.rollNumber}" else student.fullName,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 14.sp,
                 color      = MaterialTheme.colorScheme.onSurface
@@ -1084,7 +1132,7 @@ private fun EarlyLeaveRow(student: Student, isPresent: Boolean, label: String, o
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "Roll ${student.rollNumber}: ${student.fullName}",
+                text       = if (student.rollNumber.isNotBlank()) "${student.fullName} · ${student.rollNumber}" else student.fullName,
                 fontWeight = FontWeight.Bold,
                 fontSize   = 14.sp,
                 color      = MaterialTheme.colorScheme.onSurface
@@ -1188,6 +1236,7 @@ private fun processPhoto(
             )
         }
 
+        val matchedStudentId = assignedCandidate?.studentId ?: sortedCandidates.firstOrNull()?.studentId
         results.add(
             RecognitionResult(
                 faceIndex = faceIndex,
@@ -1195,7 +1244,7 @@ private fun processPhoto(
                 topMatch = assignedCandidate ?: sortedCandidates.firstOrNull(),
                 top5Candidates = top5,
                 confidenceTier = tier,
-                selectedStudentId = if (tier != ConfidenceTier.LOW) assignedCandidate?.studentId else null
+                selectedStudentId = matchedStudentId
             )
         )
     }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.vaibhav.facialattendancesystem.ui.components.CircularImageCropperDialog
 import com.vaibhav.facialattendancesystem.ui.components.ProfileImageHelper
 import com.vaibhav.facialattendancesystem.data.Student
 import com.vaibhav.facialattendancesystem.ui.components.StatusPill
@@ -79,17 +80,42 @@ fun StudentProfileScreen(
         }
     }
 
+    var bitmapToCrop by remember { mutableStateOf<Bitmap?>(null) }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            val saved = ProfileImageHelper.saveProfileImageFromUri(context, student.studentId, uri)
-            if (saved) {
-                profileBitmap = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
-                // Upload to cloud so teacher can see it in the class roster
-                scope.launch { CloudSyncManager.uploadProfileAvatar(context, student.studentId) }
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val original = android.graphics.BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (original != null) {
+                    bitmapToCrop = original
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
+    }
+
+    bitmapToCrop?.let { bmp ->
+        CircularImageCropperDialog(
+            sourceBitmap = bmp,
+            onDismiss = {
+                try { bmp.recycle() } catch (_: Exception) {}
+                bitmapToCrop = null
+            },
+            onCropConfirmed = { cropped ->
+                val saved = ProfileImageHelper.saveProfileBitmap(context, student.studentId, cropped)
+                if (saved) {
+                    profileBitmap = ProfileImageHelper.loadProfileBitmap(context, student.studentId)
+                    scope.launch { CloudSyncManager.uploadProfileAvatar(context, student.studentId) }
+                }
+                try { bmp.recycle() } catch (_: Exception) {}
+                bitmapToCrop = null
+            }
+        )
     }
 
     Column(
@@ -208,6 +234,7 @@ fun StudentProfileScreen(
 
         val borderColor = adaptiveBorderColor()
         val dividerColor = adaptiveDividerColor()
+        val isEnrolledBiometrics = student.enrollmentStatus == 1
 
         // ── Stat cards ───────────────────────────────────────────
         Row(
@@ -215,8 +242,8 @@ fun StudentProfileScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             listOf(
-                Triple("$joinedClassesCount", "Classes", PrimaryCyan),
-                Triple("6 Angles", "Profile", SuccessGreen)
+                Triple("$joinedClassesCount", "Enrolled Classes", PrimaryCyan),
+                Triple(if (isEnrolledBiometrics) "Active" else "Pending", "Biometrics Status", if (isEnrolledBiometrics) SuccessGreen else WarningAmber)
             ).forEach { (value, label, color) ->
                 Box(
                     modifier = Modifier
