@@ -215,11 +215,12 @@ fun AppNavigation(
     val savedSession = remember { sessionManager.getSession() }
 
     LaunchedEffect(targetClass) {
-        if (targetClass != null && savedSession != null) {
+        val liveSession = sessionManager.getSession()
+        if (targetClass != null && liveSession != null) {
             val (classId, className) = targetClass
-            if (savedSession.userRole == "STUDENT") {
+            if (liveSession.userRole == "STUDENT") {
                 navController.navigate(Screen.StudentClassAttendance.createRoute(classId, className))
-            } else if (savedSession.userRole == "TEACHER") {
+            } else if (liveSession.userRole == "TEACHER") {
                 navController.navigate(Screen.AttendanceHistory.createRoute(classId, className))
             }
             onClearTargetClass()
@@ -238,7 +239,13 @@ fun AppNavigation(
         com.vaibhav.facialattendancesystem.data.CloudSyncManager.purgeAutoFaceAvatarsOnce(context)
         val updateInfo = com.vaibhav.facialattendancesystem.data.CloudSyncManager.checkForGitHubUpdate()
         if (updateInfo != null) {
-            availableUpdate = updateInfo
+            // Only show the update dialog if the user hasn't already dismissed this exact version tag.
+            // This prevents the dialog from reappearing on every cold launch after the user taps "LATER".
+            val dismissedPrefs = context.getSharedPreferences("swiffmark_update", android.content.Context.MODE_PRIVATE)
+            val lastDismissedTag = dismissedPrefs.getString("dismissed_tag", "")
+            if (updateInfo.first != lastDismissedTag) {
+                availableUpdate = updateInfo
+            }
         }
     }
 
@@ -497,76 +504,88 @@ fun AppNavigation(
                 }
 
                 if (consentGiven) {
+                    var isSavingEnrollment by remember { mutableStateOf(false) }
                     StudentEnrollmentScreen(
                     studentId = studentId,
                     studentName = studentName,
+                    isSaving = isSavingEnrollment,
                     onEnrollmentComplete = { capturedSteps, averagedVector ->
+                        isSavingEnrollment = true
                         scope.launch(Dispatchers.IO) {
-                            val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
+                            try {
+                                val converters = com.vaibhav.facialattendancesystem.data.VectorTypeConverters()
 
-                            // Check cross-account duplicate faces (biometric conflict prevention)
-                            val otherEmbeddings = db.faceEmbeddingDao().getAllEmbeddingsExcept(studentId)
-                            var duplicateStudentName: String? = null
-                            var maxSim = 0f
-                            for (other in otherEmbeddings) {
-                                val vec = converters.byteArrayToFloatArray(other.embeddingVector) ?: continue
-                                val sim = com.vaibhav.facialattendancesystem.ml.FaceMath.cosineSimilarity(averagedVector, vec)
-                                if (sim >= 0.42f && sim > maxSim) {
-                                    maxSim = sim
-                                    val existingStudent = db.studentDao().getStudentById(other.studentId)
-                                    duplicateStudentName = existingStudent?.fullName ?: "another registered student"
+                                // Check cross-account duplicate faces (biometric conflict prevention)
+                                val otherEmbeddings = db.faceEmbeddingDao().getAllEmbeddingsExcept(studentId)
+                                var duplicateStudentName: String? = null
+                                var maxSim = 0f
+                                for (other in otherEmbeddings) {
+                                    val vec = converters.byteArrayToFloatArray(other.embeddingVector) ?: continue
+                                    val sim = com.vaibhav.facialattendancesystem.ml.FaceMath.cosineSimilarity(averagedVector, vec)
+                                    if (sim >= 0.42f && sim > maxSim) {
+                                        maxSim = sim
+                                        val existingStudent = db.studentDao().getStudentById(other.studentId)
+                                        duplicateStudentName = existingStudent?.fullName ?: "another registered student"
+                                    }
                                 }
-                            }
 
-                            if (duplicateStudentName != null) {
+                                if (duplicateStudentName != null) {
+                                    withContext(Dispatchers.Main) {
+                                        isSavingEnrollment = false
+                                        showBanner("Biometric Conflict: Face already registered to $duplicateStudentName. Enrollment blocked.", true)
+                                    }
+                                    return@launch
+                                }
+
+                                val embeddings = capturedSteps.map { step ->
+                                    FaceEmbedding(
+                                        studentId = studentId,
+                                        embeddingVector = converters.floatArrayToByteArray(step.embedding) ?: ByteArray(0),
+                                        sourceAngle = step.stepAngle,
+                                        qualityScore = step.qualityScore
+                                    )
+                                } + listOf(
+                                    FaceEmbedding(
+                                        studentId = studentId,
+                                        embeddingVector = converters.floatArrayToByteArray(averagedVector) ?: ByteArray(0),
+                                        sourceAngle = "AVERAGED",
+                                        qualityScore = 1.0f
+                                    )
+                                )
+                                // Atomic replace: delete + insert in a single SQLite transaction
+                                // so a crash mid-way leaves the student with their old embeddings.
+                                db.faceEmbeddingDao().replaceEmbeddingsForStudent(studentId, embeddings)
+
+                                val student = db.studentDao().getStudentById(studentId)
+                                if (student != null) {
+                                    val updatedStudent = student.copy(enrollmentStatus = 1)
+                                    db.studentDao().updateStudent(updatedStudent)
+                                }
+
+                                // Navigate immediately so student never waits on network upload
                                 withContext(Dispatchers.Main) {
-                                    showBanner("Biometric Conflict: Face already registered to $duplicateStudentName. Enrollment blocked.", true)
+                                    isSavingEnrollment = false
+                                    showBanner("Face profile registered! Syncing with cloud... ✓", false)
+                                    navController.navigate(Screen.StudentDashboard.createRoute(studentId)) {
+                                        popUpTo(0)
+                                    }
                                 }
-                                return@launch
-                            }
 
-                            val embeddings = capturedSteps.map { step ->
-                                FaceEmbedding(
-                                    studentId = studentId,
-                                    embeddingVector = converters.floatArrayToByteArray(step.embedding) ?: ByteArray(0),
-                                    sourceAngle = step.stepAngle,
-                                    qualityScore = step.qualityScore
-                                )
-                            } + listOf(
-                                FaceEmbedding(
-                                    studentId = studentId,
-                                    embeddingVector = converters.floatArrayToByteArray(averagedVector) ?: ByteArray(0),
-                                    sourceAngle = "AVERAGED",
-                                    qualityScore = 1.0f
-                                )
-                            )
-                            // Atomic replace: delete + insert in a single SQLite transaction
-                            // so a crash mid-way leaves the student with their old embeddings.
-                            db.faceEmbeddingDao().replaceEmbeddingsForStudent(studentId, embeddings)
-
-                            val student = db.studentDao().getStudentById(studentId)
-                            val user = student?.let { db.userDao().getUserById(it.userId) }
-                            if (student != null) {
-                                val updatedStudent = student.copy(enrollmentStatus = 1)
-                                db.studentDao().updateStudent(updatedStudent)
-                            }
-
-                            // Navigate immediately so student never waits on network upload
-                            withContext(Dispatchers.Main) {
-                                showBanner("Face profile registered! Syncing with cloud... ✓", false)
-                                navController.navigate(Screen.StudentDashboard.createRoute(studentId)) {
-                                    popUpTo(0)
+                                // Sync profile and multi-angle embeddings to cloud in background (do NOT upload face photos)
+                                if (student != null) {
+                                    val updatedStudent = student.copy(enrollmentStatus = 1)
+                                    val allVectorsWithAngles = capturedSteps.map { it.stepAngle to it.embedding } + listOf("FUSED_AVERAGE" to averagedVector)
+                                    com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadStudentProfile(
+                                        student = updatedStudent,
+                                        embeddingsWithAngles = allVectorsWithAngles
+                                    )
                                 }
-                            }
-
-                            // Sync profile and multi-angle embeddings to cloud in background (do NOT upload face photos)
-                            if (student != null) {
-                                val updatedStudent = student.copy(enrollmentStatus = 1)
-                                val allVectorsWithAngles = capturedSteps.map { it.stepAngle to it.embedding } + listOf("FUSED_AVERAGE" to averagedVector)
-                                com.vaibhav.facialattendancesystem.data.CloudSyncManager.uploadStudentProfile(
-                                    student = updatedStudent,
-                                    embeddingsWithAngles = allVectorsWithAngles
-                                )
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                withContext(Dispatchers.Main) {
+                                    isSavingEnrollment = false
+                                    showBanner("Failed to save face profile: ${e.localizedMessage}", true)
+                                }
                             }
                         }
                     },
@@ -883,8 +902,8 @@ fun AppNavigation(
                     onPurgeData = {
                         scope.launch(Dispatchers.IO) {
                             try {
-                                val teacherId = savedSession?.userId ?: ""
-                                val classes = db.clazzDao().getClassesListForTeacher(teacherId)
+                                val activeTeacherId = teacherId.ifBlank { sessionManager.getSession()?.userId ?: "" }
+                                val classes = db.clazzDao().getClassesListForTeacher(activeTeacherId)
                                 for (c in classes) {
                                     com.vaibhav.facialattendancesystem.data.CloudSyncManager.deleteClass(
                                         c.classId,
@@ -1090,6 +1109,9 @@ fun AppNavigation(
                         allEmbeddings = allEmbeddingsData,
                         sessionId = sessionId,
                         recognitionLogDao = db.recognitionLogDao(),
+                        onLogsCaptured = { photoLabel, logs ->
+                            attendanceViewModel.cacheRecognitionLogs(photoLabel, logs)
+                        },
                         onConfirmAttendance = { p1Path, p2Path, presentStudentIds, p1Statuses, p2Statuses, p1FaceCount, p2FaceCount ->
                         scope.launch(Dispatchers.IO) {
                             try {
@@ -1104,6 +1126,15 @@ fun AppNavigation(
                                     sessionStatus = "COMPLETED"
                                 )
                                 db.attendanceDao().insertSession(session)
+
+                                val capturedLogs = attendanceViewModel.consumeCachedRecognitionLogs()
+                                if (capturedLogs.isNotEmpty()) {
+                                    try {
+                                        db.recognitionLogDao().insertLogs(capturedLogs)
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                }
 
                                 val p1Map = p1Statuses.associateBy { it.student.studentId }
                                 val p2Map = p2Statuses.associateBy { it.student.studentId }
@@ -1424,6 +1455,9 @@ fun AppNavigation(
                             } catch (e: Exception) {
                                 android.util.Log.e("Navigation", "Could not open release page", e)
                             }
+                            // Clear dismissed tag so if the user cancels the install, the dialog returns next launch
+                            val dismissedPrefs = context.getSharedPreferences("swiffmark_update", android.content.Context.MODE_PRIVATE)
+                            dismissedPrefs.edit().remove("dismissed_tag").apply()
                             availableUpdate = null
                         },
                         shape = RoundedCornerShape(10.dp),
@@ -1433,7 +1467,12 @@ fun AppNavigation(
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { availableUpdate = null }) {
+                    TextButton(onClick = {
+                        // Persist the dismissed tag so this dialog doesn't reappear on the next launch
+                        val dismissedPrefs = context.getSharedPreferences("swiffmark_update", android.content.Context.MODE_PRIVATE)
+                        dismissedPrefs.edit().putString("dismissed_tag", latestTag).apply()
+                        availableUpdate = null
+                    }) {
                         Text("LATER", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

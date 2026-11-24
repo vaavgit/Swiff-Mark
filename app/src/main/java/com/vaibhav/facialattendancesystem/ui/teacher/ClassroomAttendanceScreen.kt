@@ -190,6 +190,7 @@ fun ClassroomAttendanceScreen(
     allEmbeddings: List<Pair<Student, List<FloatArray>>>,
     sessionId: String,
     recognitionLogDao: RecognitionLogDao,
+    onLogsCaptured: (photoLabel: String, logs: List<RecognitionLog>) -> Unit = { _, _ -> },
     onConfirmAttendance: (
         photo1Path: String,
         photo2Path: String,
@@ -346,8 +347,9 @@ fun ClassroomAttendanceScreen(
                         } catch (e: Exception) { "photo_1_${System.currentTimeMillis()}.jpg" }
                         // Use Dispatchers.IO (not Default) — ML Kit Tasks.await() is a blocking call.
                         // Default dispatcher has only CPU-core threads; blocking it causes starvation/timeouts.
-                        val results = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_1", recognitionLogDao)
+                        val (results, logs) = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_1")
                         try { bitmap.recycle() } catch (_: Exception) {}
+                        onLogsCaptured("PHOTO_1", logs)
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
                             photo1Path = savedPath
@@ -452,8 +454,9 @@ fun ClassroomAttendanceScreen(
                             file.absolutePath
                         } catch (e: Exception) { "photo_2_${System.currentTimeMillis()}.jpg" }
                         // Use Dispatchers.IO (not Default) — ML Kit Tasks.await() is a blocking call.
-                        val results = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_2", recognitionLogDao)
+                        val (results, logs) = processPhoto(bitmap, detectorHelper, classifierHelper, allEmbeddings, sessionId, "PHOTO_2")
                         try { bitmap.recycle() } catch (_: Exception) {}
+                        onLogsCaptured("PHOTO_2", logs)
                         val statuses = buildStudentStatuses(results, enrolledStudents)
                         withContext(Dispatchers.Main) {
                             photo2Path = savedPath
@@ -1159,12 +1162,11 @@ private fun processPhoto(
     classifier: FaceClassifierHelper,
     allEmbeddings: List<Pair<Student, List<FloatArray>>>,
     sessionId: String,
-    photoLabel: String,
-    logDao: RecognitionLogDao
-): List<RecognitionResult> {
+    photoLabel: String
+): Pair<List<RecognitionResult>, List<RecognitionLog>> {
 
     val faces = detector.detectFaces(bitmap)
-    if (faces.isEmpty()) return emptyList()
+    if (faces.isEmpty()) return Pair(emptyList(), emptyList())
 
     // Step A: Extract embeddings and candidate lists for each face in the bench
     val faceCandidateMap = mutableMapOf<Int, List<RecognitionCandidate>>()
@@ -1249,13 +1251,5 @@ private fun processPhoto(
         )
     }
 
-    if (logsToBatch.isNotEmpty()) {
-        try {
-            logDao.insertLogs(logsToBatch)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    return results
+    return Pair(results, logsToBatch)
 }

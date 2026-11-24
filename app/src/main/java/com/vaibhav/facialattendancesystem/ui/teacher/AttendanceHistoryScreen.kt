@@ -488,7 +488,7 @@ fun SessionRosterDialog(
             }
             val matchesSearch = searchQuery.isBlank() ||
                 s.fullName.contains(searchQuery, ignoreCase = true) ||
-                s.rollNumber.toString().contains(searchQuery) ||
+                s.rollNumber.contains(searchQuery, ignoreCase = true) ||
                 s.email.contains(searchQuery, ignoreCase = true)
             matchesFilter && matchesSearch
         }
@@ -781,7 +781,7 @@ fun exportSessionToCsv(
             val finalStatus = if (record.markedPresent == 1) "PRESENT" else "ABSENT"
             val override = if (record.manualOverride == 1) "YES" else "NO"
 
-            writer.write("${student.rollNumber},${escapeCsv(student.fullName)},${escapeCsv(student.email)},$p1,$p2,$dual,$finalStatus,$override\n")
+            writer.write("${escapeCsv(student.rollNumber)},${escapeCsv(student.fullName)},${escapeCsv(student.email)},$p1,$p2,$dual,$finalStatus,$override\n")
         }
 
         writer.flush()
@@ -887,7 +887,7 @@ fun exportAdminCollegeAttendanceCsv(
         allStudents.sortedBy { it.rollNumber }.forEachIndexed { index, student ->
             val row = mutableListOf<String>()
             row.add("${index + 1}")
-            row.add("${student.rollNumber}")
+            row.add(escapeCsv(student.rollNumber))
             row.add(escapeCsv(student.fullName))
             row.add(escapeCsv(student.classSection ?: section.ifBlank { "A" }))
             row.add(escapeCsv(student.email))
@@ -949,7 +949,7 @@ fun exportAdminCollegeAttendanceCsv(
             for ((dStudent, dAttended, dPct) in defaulters.sortedBy { it.second }) {
                 val targetAttended = kotlin.math.ceil((defaulterThresholdPct * sortedSessions.size) / 100.0).toInt()
                 val deficit = (targetAttended - dAttended).coerceAtLeast(1)
-                writer.write("${dStudent.rollNumber},\"${dStudent.fullName}\",$dAttended,${sortedSessions.size},$dPct%,Short by $deficit lectures\n")
+                writer.write("${escapeCsv(dStudent.rollNumber)},${escapeCsv(dStudent.fullName)},$dAttended,${sortedSessions.size},$dPct%,Short by $deficit lectures\n")
             }
             writer.write("\n")
         } else {
@@ -1027,7 +1027,7 @@ fun exportDefaultersCsv(
         writer.write("Roll No,Student Name,Email,Classes Attended,Total Classes,Attendance %,Shortage (Needed to Reach 75%),Status\n")
         for ((student, attended, pct) in defaulters.sortedBy { it.second }) {
             val needed = (3 * totalSessions - 4 * attended).coerceAtLeast(1)
-            writer.write("${student.rollNumber},${escapeCsv(student.fullName)},${escapeCsv(student.email)},$attended,$totalSessions,$pct%,Must attend next $needed classes,DEFAULTER\n")
+            writer.write("${escapeCsv(student.rollNumber)},${escapeCsv(student.fullName)},${escapeCsv(student.email)},$attended,$totalSessions,$pct%,Must attend next $needed classes,DEFAULTER\n")
         }
 
         writer.write("\n========================================================================================\n")

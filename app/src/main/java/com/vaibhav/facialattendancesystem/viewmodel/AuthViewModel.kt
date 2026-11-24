@@ -76,7 +76,15 @@ class AuthViewModel(
                     sessionManager.savePortalLogin(email, password, isTeacher, saveLogin)
                     CloudSyncManager.setAuthToken(authResult.accessToken)
 
-                    var localUser = db.userDao().getUserByEmail(email)
+                    // Look up by canonical Supabase userId first; clean up any stale local row
+                    // for the same email with a mismatched userId (e.g. after Supabase DB reset).
+                    val staleByEmail = db.userDao().getUserByEmail(authResult.email)
+                        ?: db.userDao().getUserByEmail(email.trim())
+                    if (staleByEmail != null && staleByEmail.userId != authResult.userId) {
+                        db.userDao().deleteUserById(staleByEmail.userId)
+                    }
+
+                    var localUser = db.userDao().getUserById(authResult.userId)
                     if (localUser == null) {
                         localUser = User(
                             userId = authResult.userId,
@@ -84,6 +92,13 @@ class AuthViewModel(
                             passwordHash = "",
                             userType = roleUpper,
                             name = authResult.fullName
+                        )
+                        db.userDao().insertUser(localUser)
+                    } else if (localUser.email != authResult.email || localUser.userType != roleUpper) {
+                        localUser = localUser.copy(
+                            email = authResult.email,
+                            userType = roleUpper,
+                            name = authResult.fullName.ifBlank { localUser.name }
                         )
                         db.userDao().insertUser(localUser)
                     }
@@ -234,14 +249,18 @@ class AuthViewModel(
                     }
                 }
                 is AuthResult.Success -> {
-                    val newUser = User(userId = authResult.userId, email = email, passwordHash = "", userType = "STUDENT", name = name)
+                    val staleStudentUser = db.userDao().getUserByEmail(email.trim())
+                    if (staleStudentUser != null && staleStudentUser.userId != authResult.userId) {
+                        db.userDao().deleteUserById(staleStudentUser.userId)
+                    }
+                    val newUser = User(userId = authResult.userId, email = email.trim(), passwordHash = "", userType = "STUDENT", name = name)
                     db.userDao().insertUser(newUser)
                     val student = Student(
                         studentId = authResult.userId,
                         userId = authResult.userId,
                         rollNumber = rollNo,
                         fullName = name,
-                        email = email,
+                        email = email.trim(),
                         classSection = section
                     )
                     db.studentDao().insertStudent(student)
@@ -311,7 +330,11 @@ class AuthViewModel(
                     }
                 }
                 is AuthResult.Success -> {
-                    val newUser = User(userId = authResult.userId, email = email, passwordHash = "", userType = "TEACHER", name = name)
+                    val staleTeacherUser = db.userDao().getUserByEmail(email.trim())
+                    if (staleTeacherUser != null && staleTeacherUser.userId != authResult.userId) {
+                        db.userDao().deleteUserById(staleTeacherUser.userId)
+                    }
+                    val newUser = User(userId = authResult.userId, email = email.trim(), passwordHash = "", userType = "TEACHER", name = name)
                     db.userDao().insertUser(newUser)
                     val teacher = Teacher(
                         teacherId = authResult.userId,

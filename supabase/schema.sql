@@ -411,7 +411,16 @@ DROP POLICY IF EXISTS "Profiles delete policy" ON public.profiles;
 DROP POLICY IF EXISTS "Allow all on profiles" ON public.profiles;
 
 CREATE POLICY "profiles_select" ON public.profiles FOR SELECT TO authenticated
-    USING (id::text = (auth.uid())::text OR public.is_teacher_of_student(public.profiles.id::text, (auth.uid())::text));
+    USING (
+        id::text = (auth.uid())::text
+        OR public.is_teacher_of_student(public.profiles.id::text, (auth.uid())::text)
+        OR EXISTS (
+            SELECT 1 FROM public.classes c
+            JOIN public.class_enrollments ce ON ce.class_id::text = c.class_id::text
+            WHERE c.teacher_id::text = public.profiles.id::text
+            AND ce.student_id::text = (auth.uid())::text
+        )
+    );
 CREATE POLICY "profiles_insert" ON public.profiles FOR INSERT TO authenticated
     WITH CHECK (id::text = (auth.uid())::text);
 CREATE POLICY "profiles_update" ON public.profiles FOR UPDATE TO authenticated

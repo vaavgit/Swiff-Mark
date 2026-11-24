@@ -34,6 +34,9 @@ interface UserDao {
 
     @Query("SELECT * FROM users WHERE user_id = :userId LIMIT 1")
     fun getUserByIdFlow(userId: String): Flow<User?>
+
+    @Query("DELETE FROM users WHERE user_id = :userId")
+    fun deleteUserById(userId: String): Int
 }
 
 @Dao

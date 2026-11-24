@@ -89,7 +89,8 @@ fun StudentEnrollmentScreen(
     studentId: String,
     studentName: String,
     onEnrollmentComplete: (List<CapturedStepData>, FloatArray) -> Unit,
-    onSkip: (() -> Unit)? = null
+    onSkip: (() -> Unit)? = null,
+    isSaving: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -144,11 +145,17 @@ fun StudentEnrollmentScreen(
     )
 
     var currentStepIndex by remember { mutableStateOf(0) }
-    var stepEnterTimestamp by remember(currentStepIndex) { mutableStateOf(System.currentTimeMillis()) }
+    var allowEyeGrace by remember(currentStepIndex) { mutableStateOf(false) }
     var currentFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var detectedFaces by remember { mutableStateOf<List<DetectedFace>>(emptyList()) }
     var qualityMetrics by remember { mutableStateOf<FaceQualityMetrics?>(null) }
     var frameAnalysisCount by remember { mutableStateOf(0) }
+
+    LaunchedEffect(currentStepIndex) {
+        allowEyeGrace = false
+        kotlinx.coroutines.delay(2500L)
+        allowEyeGrace = true
+    }
 
     val capturedData = remember { mutableStateListOf<CapturedStepData>() }
     var isProcessingStep by remember { mutableStateOf(false) }
@@ -173,13 +180,14 @@ fun StudentEnrollmentScreen(
     }
 
     if (isFinished) {
-        val averagedVector = remember {
+        val averagedVector = remember(capturedData.toList()) {
             FaceMath.averageEmbeddings(capturedData.map { it.embedding })
         }
 
         EnrollmentSummaryView(
             studentName = studentName,
             capturedSteps = capturedData,
+            isSaving = isSaving,
             onConfirm = { onEnrollmentComplete(capturedData, averagedVector) },
             onReCapture = {
                 // Reset enrollment state to start over
@@ -278,6 +286,38 @@ fun StudentEnrollmentScreen(
 
     val isAnalyzingFrame = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
+    val primaryFace = detectedFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+    val frame = currentFrameBitmap
+    val faceWidthRatio = if (primaryFace != null && frame != null && frame.width > 0) {
+        primaryFace.boundingBox.width() / frame.width
+    } else 0f
+    val faceCenterXRatio = if (primaryFace != null && frame != null && frame.width > 0) {
+        primaryFace.boundingBox.centerX() / frame.width
+    } else 0f
+    val faceCenterYRatio = if (primaryFace != null && frame != null && frame.height > 0) {
+        primaryFace.boundingBox.centerY() / frame.height
+    } else 0f
+
+    val isFaceSufficientSize = faceWidthRatio in 0.15f..0.85f
+    val isFaceCentered = faceCenterXRatio in 0.15f..0.85f && faceCenterYRatio in 0.10f..0.90f
+    val hasValidFace = primaryFace != null && frame != null && isFaceSufficientSize && isFaceCentered
+
+    val facePrompt = when {
+        primaryFace == null -> "POSITION FACE INSIDE OVAL"
+        faceWidthRatio < 0.15f -> "MOVE CLOSER TO CAMERA"
+        faceWidthRatio > 0.85f -> "MOVE SLIGHTLY BACK"
+        !isFaceCentered -> "CENTER FACE IN OVAL"
+        else -> "ALIGN FACE IN OVAL"
+    }
+
+    val haptic = LocalHapticFeedback.current
+    val (isPoseValid, posePrompt) = checkStepPose(
+        angle = currentAngle,
+        face = primaryFace,
+        allowEyeGrace = allowEyeGrace
+    )
+    val isReadyToCapture = hasValidFace && (isPoseValid || allowEyeGrace) && !isProcessingStep
+
     // Camera Preview Frame
     Box(
         modifier = Modifier
@@ -295,18 +335,18 @@ fun StudentEnrollmentScreen(
             useWhiteFlash = true,
             progressFraction = progressFraction,
             onFrameAnalyzed = { bitmap ->
-                currentFrameBitmap = bitmap
                 if (isAnalyzingFrame.compareAndSet(false, true)) {
                     scope.launch(Dispatchers.Default) {
                         try {
                             val faces = detectorHelper.detectFaces(bitmap)
                             withContext(Dispatchers.Main) {
+                                currentFrameBitmap = bitmap
                                 detectedFaces = faces
                                 frameAnalysisCount++
-                                val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                                if (primaryFace != null && primaryFace.boundingBox.width() >= bitmap.width * 0.15f) {
+                                val detectedPrimary = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                                if (detectedPrimary != null && detectedPrimary.boundingBox.width() >= bitmap.width * 0.15f) {
                                     if (frameAnalysisCount % 3 == 0 || qualityMetrics == null) {
-                                        qualityMetrics = ImageQualityValidator.validateFaceQuality(bitmap, primaryFace.boundingBox)
+                                        qualityMetrics = ImageQualityValidator.validateFaceQuality(bitmap, detectedPrimary.boundingBox)
                                     }
                                 } else {
                                     qualityMetrics = null
@@ -342,47 +382,10 @@ fun StudentEnrollmentScreen(
                 }
             }
 
-            // Real-time Live Guidance Floating Pill (Apple Face ID / Revolut style)
-            val primaryFace = detectedFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-            val frame = currentFrameBitmap
-            val faceWidthRatio = if (primaryFace != null && frame != null && frame.width > 0) {
-                primaryFace.boundingBox.width() / frame.width
-            } else 0f
-            val faceCenterXRatio = if (primaryFace != null && frame != null && frame.width > 0) {
-                primaryFace.boundingBox.centerX() / frame.width
-            } else 0f
-            val faceCenterYRatio = if (primaryFace != null && frame != null && frame.height > 0) {
-                primaryFace.boundingBox.centerY() / frame.height
-            } else 0f
-
-            val isFaceSufficientSize = faceWidthRatio in 0.15f..0.85f
-            val isFaceCentered = faceCenterXRatio in 0.15f..0.85f && faceCenterYRatio in 0.10f..0.90f
-            val hasValidFace = primaryFace != null && frame != null && isFaceSufficientSize && isFaceCentered
-
-            val facePrompt = when {
-                primaryFace == null -> "POSITION FACE INSIDE OVAL"
-                faceWidthRatio < 0.15f -> "MOVE CLOSER TO CAMERA"
-                faceWidthRatio > 0.85f -> "MOVE SLIGHTLY BACK"
-                !isFaceCentered -> "CENTER FACE IN OVAL"
-                else -> "ALIGN FACE IN OVAL"
-            }
-
-            val elapsedStepMs = System.currentTimeMillis() - stepEnterTimestamp
-            val allowEyeGrace = elapsedStepMs > 2500L
-
-            val haptic = LocalHapticFeedback.current
-            val (isPoseValid, posePrompt) = checkStepPose(
-                angle = currentAngle,
-                face = primaryFace,
-                allowEyeGrace = allowEyeGrace
-            )
-            val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
-
-            var isHoldingValidPose by remember { mutableStateOf(false) }
-
+            // Real-time Live Guidance Floating Pill
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = if (isHoldingValidPose) SuccessGreen.copy(alpha = 0.95f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
                 shadowElevation = 6.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -392,93 +395,33 @@ fun StudentEnrollmentScreen(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isHoldingValidPose) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "HOLD STILL... CAPTURING!",
-                            color = Color.White,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 13.sp
-                        )
-                    } else {
-                        val promptText = if (!hasValidFace) facePrompt else posePrompt
-                        val promptColor = if (!hasValidFace) MaterialTheme.colorScheme.onSurfaceVariant else if (isPoseValid) SuccessGreen else WarningAmber
-                        Text(
-                            text = promptText,
-                            color = promptColor,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
-                    }
+                    val promptText = if (!hasValidFace) facePrompt else posePrompt
+                    val promptColor = if (!hasValidFace) MaterialTheme.colorScheme.onSurfaceVariant else if (isPoseValid) SuccessGreen else WarningAmber
+                    Text(
+                        text = promptText,
+                        color = promptColor,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Capture Button & Quality Status
-        val primaryFace = detectedFaces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-        val frame = currentFrameBitmap
-        val faceWidthRatio = if (primaryFace != null && frame != null && frame.width > 0) {
-            primaryFace.boundingBox.width() / frame.width
-        } else 0f
-        val faceCenterXRatio = if (primaryFace != null && frame != null && frame.width > 0) {
-            primaryFace.boundingBox.centerX() / frame.width
-        } else 0f
-        val faceCenterYRatio = if (primaryFace != null && frame != null && frame.height > 0) {
-            primaryFace.boundingBox.centerY() / frame.height
-        } else 0f
-
-        val isFaceSufficientSize = faceWidthRatio in 0.15f..0.85f
-        val isFaceCentered = faceCenterXRatio in 0.15f..0.85f && faceCenterYRatio in 0.10f..0.90f
-        val hasValidFace = primaryFace != null && frame != null && isFaceSufficientSize && isFaceCentered
-
-        val facePrompt = when {
-            primaryFace == null -> "POSITION FACE INSIDE OVAL"
-            faceWidthRatio < 0.15f -> "MOVE CLOSER TO CAMERA"
-            faceWidthRatio > 0.85f -> "MOVE SLIGHTLY BACK"
-            !isFaceCentered -> "CENTER FACE IN OVAL"
-            else -> "ALIGN FACE IN OVAL"
-        }
-
-        val elapsedStepMs = System.currentTimeMillis() - stepEnterTimestamp
-        val allowEyeGrace = elapsedStepMs > 2500L
-
-        val haptic = LocalHapticFeedback.current
-        val (isPoseValid, posePrompt) = checkStepPose(
-            angle = currentAngle,
-            face = primaryFace,
-            allowEyeGrace = allowEyeGrace
-        )
-        val isReadyToCapture = hasValidFace && isPoseValid && !isProcessingStep
-
         val onExecuteCapture: () -> Unit = {
             val currentFrame = currentFrameBitmap
-            if (currentFrame != null && !isProcessingStep && (hasValidFace || primaryFace != null) && (isPoseValid || allowEyeGrace)) {
+            val targetFace = primaryFace
+            if (currentFrame != null && targetFace != null && !isProcessingStep && (isPoseValid || allowEyeGrace)) {
                 try {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 } catch (_: Exception) {}
-                val faceBox = primaryFace?.boundingBox ?: RectF(
-                    currentFrame.width * 0.15f,
-                    currentFrame.height * 0.15f,
-                    currentFrame.width * 0.85f,
-                    currentFrame.height * 0.85f
-                )
-                val targetFace = primaryFace
+                val faceBox = targetFace.boundingBox
                 isProcessingStep = true
 
                 scope.launch(Dispatchers.Default) {
                     val displayCrop = ImageQualityValidator.cropBitmapSafely(currentFrame, faceBox)
-                    val alignedFace = if (targetFace != null) {
-                        FaceAligner.align(currentFrame, targetFace)
-                    } else {
-                        displayCrop
-                    }
+                    val alignedFace = FaceAligner.align(currentFrame, targetFace)
                     val embedding = classifierHelper.getFaceEmbedding(alignedFace)
                     if (alignedFace != displayCrop && alignedFace != currentFrame) {
                         try { alignedFace.recycle() } catch (_: Exception) {}
@@ -507,25 +450,10 @@ fun StudentEnrollmentScreen(
             }
         }
 
-        var isHoldingValidPose by remember { mutableStateOf(false) }
-
-        // Hands-free fast auto capture (Apple Face ID style - 350ms hold)
-        LaunchedEffect(isReadyToCapture, currentStepIndex) {
-            if (isReadyToCapture && !isProcessingStep && !isFinished) {
-                isHoldingValidPose = true
-                kotlinx.coroutines.delay(350L)
-                if (isReadyToCapture && !isProcessingStep && !isFinished) {
-                    onExecuteCapture()
-                }
-                isHoldingValidPose = false
-            } else {
-                isHoldingValidPose = false
-            }
-        }
-
+        // Manual Capture Button (no auto-capture timer)
         Button(
             onClick = onExecuteCapture,
-            enabled = (isReadyToCapture || (hasValidFace && allowEyeGrace)) && !isProcessingStep,
+            enabled = isReadyToCapture,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = PrimaryCyan,
@@ -550,13 +478,6 @@ fun StudentEnrollmentScreen(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = WarningAmber
-                )
-            } else if (isHoldingValidPose) {
-                Text(
-                    text = "HOLD STILL... AUTO-CAPTURING",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
                 )
             } else {
                 Text(
@@ -585,7 +506,7 @@ private fun checkStepPose(
             if (kotlin.math.abs(pitch) > 15f || kotlin.math.abs(yaw) > 14f) {
                 Pair(false, "LOOK DIRECTLY AT CAMERA")
             } else {
-                Pair(true, "PERFECT — HOLD STILL")
+                Pair(true, "PERFECT — TAP CAPTURE ✓")
             }
         }
         "LEFT" -> {
@@ -623,10 +544,10 @@ private fun checkStepPose(
 fun EnrollmentSummaryView(
     studentName: String,
     capturedSteps: List<CapturedStepData>,
+    isSaving: Boolean = false,
     onConfirm: () -> Unit,
     onReCapture: (() -> Unit)? = null
 ) {
-    var isSaving by remember { mutableStateOf(false) }
 
     val straightStep = capturedSteps.find { it.stepAngle == "STRAIGHT" } ?: capturedSteps.firstOrNull()
     val hasInconsistentFace = remember(capturedSteps) {
@@ -764,7 +685,6 @@ fun EnrollmentSummaryView(
         Button(
             onClick = {
                 if (!isSaving && !hasInconsistentFace) {
-                    isSaving = true
                     onConfirm()
                 }
             },
@@ -802,6 +722,18 @@ fun EnrollmentSummaryView(
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = if (hasInconsistentFace) 12.sp else 15.sp,
                     color = if (hasInconsistentFace) MaterialTheme.colorScheme.onSurfaceVariant else Color.White
+                )
+            }
+        }
+
+        if (!hasInconsistentFace && onReCapture != null && !isSaving) {
+            Spacer(modifier = Modifier.height(6.dp))
+            TextButton(onClick = onReCapture) {
+                Text(
+                    text = "Re-capture angles",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PrimaryCyan
                 )
             }
         }

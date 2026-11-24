@@ -310,9 +310,28 @@ object CloudSyncManager {
                 val verified = verifiedStatusMap[sId] ?: 1
 
                 if (db.userDao().getUserById(sId) == null) {
+                    val staleUser = if (email.isNotBlank()) db.userDao().getUserByEmail(email) else null
+                    if (staleUser != null && staleUser.userId != sId) {
+                        db.userDao().deleteUserById(staleUser.userId)
+                    }
                     db.userDao().insertUser(User(userId = sId, email = email, passwordHash = "", userType = "STUDENT", name = fullName))
                 }
-                db.studentDao().insertStudent(Student(studentId = sId, userId = sId, fullName = fullName, rollNumber = rollNo, email = email, classSection = dept, enrollmentStatus = 1))
+                val existingStudent = db.studentDao().getStudentById(sId)
+                val embs = embeddingsMap[sId]
+                val hasAnyEmbeddings = (embs != null && embs.isNotEmpty()) ||
+                    db.faceEmbeddingDao().getEmbeddingsForStudent(sId).isNotEmpty()
+                db.studentDao().insertStudent(
+                    Student(
+                        studentId = sId,
+                        userId = sId,
+                        fullName = fullName,
+                        rollNumber = rollNo,
+                        email = email,
+                        classSection = dept,
+                        enrollmentStatus = if (hasAnyEmbeddings) 1 else (existingStudent?.enrollmentStatus ?: 0),
+                        enrollmentDate = existingStudent?.enrollmentDate ?: System.currentTimeMillis()
+                    )
+                )
                 db.classEnrollmentDao().enrollStudent(ClassEnrollment(classId = classId, studentId = sId, enrollmentVerified = verified))
                 db.classEnrollmentDao().updateEnrollmentStatus(classId, sId, verified)
 
@@ -323,7 +342,6 @@ object CloudSyncManager {
                     }
                 }
 
-                val embs = embeddingsMap[sId]
                 if (embs != null && embs.isNotEmpty()) {
                     // Only replace local embeddings when cloud returns a non-empty set.
                     // Previously this always deleted first — if the POST to cloud failed silently,
@@ -460,9 +478,21 @@ object CloudSyncManager {
                 put("created_at", isoCreatedAt)
                 put("photo1_faces_detected", session.photo1FacesDetected); put("photo2_faces_detected", session.photo2FacesDetected); put("session_status", session.sessionStatus)
             }
-            executeRequest("/rest/v1/attendance_sessions?on_conflict=session_id", "POST", sessionJson.toString(),
-                mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
-            
+            val (sessStatus, sessResp) = executeRequest(
+                "/rest/v1/attendance_sessions?on_conflict=session_id",
+                "POST",
+                sessionJson.toString(),
+                mapOf("Prefer" to "resolution=merge-duplicates,return=minimal")
+            )
+            if (sessStatus !in 200..299) {
+                Log.e(TAG, "uploadAttendanceSession session POST failed: HTTP $sessStatus $sessResp")
+                return@withContext false
+            }
+
+            if (records.isEmpty()) {
+                return@withContext true
+            }
+
             val recordsArray = JSONArray()
             for (r in records) {
                 recordsArray.put(JSONObject().apply {
@@ -476,7 +506,16 @@ object CloudSyncManager {
                     put("manually_overridden", r.manualOverride == 1)
                 })
             }
-            executeRequest("/rest/v1/attendance_records?on_conflict=session_id,student_id", "POST", recordsArray.toString(), mapOf("Prefer" to "resolution=merge-duplicates,return=minimal"))
+            val (recStatus, recResp) = executeRequest(
+                "/rest/v1/attendance_records?on_conflict=session_id,student_id",
+                "POST",
+                recordsArray.toString(),
+                mapOf("Prefer" to "resolution=merge-duplicates,return=minimal")
+            )
+            if (recStatus !in 200..299) {
+                Log.e(TAG, "uploadAttendanceSession records POST failed: HTTP $recStatus $recResp")
+                return@withContext false
+            }
             true
         } catch (e: Exception) {
             Log.e(TAG, "uploadAttendanceSession failed", e)
@@ -1157,17 +1196,56 @@ object CloudSyncManager {
                 if (rStatus in 200..299) {
                     val rArray = JSONArray(rResp)
                     val recordsToInsert = mutableListOf<AttendanceRecord>()
+                    val existingBySession = mutableMapOf<String, Map<String, AttendanceRecord>>()
+                    val knownStudentCache = mutableMapOf<String, Boolean>()
                     for (i in 0 until rArray.length()) {
                         val rObj = rArray.getJSONObject(i)
+                        val recSessionId = rObj.getString("session_id")
+                        val recStudentId = rObj.getString("student_id")
+                        val studentExists = knownStudentCache.getOrPut(recStudentId) {
+                            db.studentDao().getStudentById(recStudentId) != null
+                        }
+                        if (!studentExists) continue
+
+                        val sessionMap = existingBySession.getOrPut(recSessionId) {
+                            db.attendanceDao().getRecordsForSession(recSessionId).associateBy { it.studentId }
+                        }
+                        val existing = sessionMap[recStudentId]
+
                         val isPres = if (rObj.optBoolean("marked_present", false)) 1 else 0
+                        val p1Matched = if (rObj.has("photo1_matched")) (if (rObj.optBoolean("photo1_matched", false)) 1 else 0) else (existing?.photo1Matched ?: isPres)
+                        val p2Matched = if (rObj.has("photo2_matched")) (if (rObj.optBoolean("photo2_matched", false)) 1 else 0) else (existing?.photo2Matched ?: isPres)
+                        val dualPresent = if (rObj.has("dual_capture_present")) (if (rObj.optBoolean("dual_capture_present", false)) 1 else 0) else (existing?.dualCapturePresent ?: isPres)
+                        val confScore = if (rObj.has("confidence_score") && !rObj.isNull("confidence_score")) {
+                            rObj.optDouble("confidence_score", 0.0).toFloat()
+                        } else {
+                            existing?.photo1MatchConfidence
+                        }
+                        val overridden = if (rObj.optBoolean("manually_overridden", false) || existing?.manualOverride == 1) 1 else 0
+                        val overriddenAt = existing?.manuallyOverriddenAt
+                        val overriddenBy = rObj.optString("overridden_by", "").ifBlank { existing?.overriddenBy }
+
                         recordsToInsert.add(
-                            AttendanceRecord(
-                                sessionId = rObj.getString("session_id"),
-                                studentId = rObj.getString("student_id"),
-                                photo1Matched = isPres,
-                                photo2Matched = isPres,
-                                dualCapturePresent = isPres,
-                                markedPresent = isPres
+                            existing?.copy(
+                                photo1Matched = p1Matched,
+                                photo2Matched = p2Matched,
+                                dualCapturePresent = dualPresent,
+                                markedPresent = isPres,
+                                photo1MatchConfidence = existing.photo1MatchConfidence ?: confScore,
+                                manualOverride = overridden,
+                                manuallyOverriddenAt = overriddenAt,
+                                overriddenBy = overriddenBy
+                            ) ?: AttendanceRecord(
+                                sessionId = recSessionId,
+                                studentId = recStudentId,
+                                photo1MatchConfidence = confScore,
+                                photo1Matched = p1Matched,
+                                photo2Matched = p2Matched,
+                                dualCapturePresent = dualPresent,
+                                markedPresent = isPres,
+                                manualOverride = overridden,
+                                manuallyOverriddenAt = overriddenAt,
+                                overriddenBy = overriddenBy
                             )
                         )
                     }
@@ -1402,8 +1480,9 @@ object CloudSyncManager {
      * Returns Triple(latestVersionTag, releaseNotes, downloadUrl) if a newer version than BuildConfig.VERSION_NAME exists, else null.
      */
     suspend fun checkForGitHubUpdate(): Triple<String, String, String>? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
-            val conn = URL("https://api.github.com/repos/vaavgit/Swiff-Mark/releases/latest").openConnection() as HttpURLConnection
+            conn = URL("https://api.github.com/repos/vaavgit/Swiff-Mark/releases/latest").openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.connectTimeout = 8000
             conn.readTimeout = 8000
@@ -1436,6 +1515,8 @@ object CloudSyncManager {
             } else null
         } catch (_: Exception) {
             null
+        } finally {
+            try { conn?.disconnect() } catch (_: Exception) {}
         }
     }
 

@@ -342,7 +342,7 @@ fun StudentProfileScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("RE-ENROLL 6-ANGLE FACE PROFILE", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("RE-ENROLL FACE PROFILE", fontWeight = FontWeight.Bold, color = Color.White)
                 }
 
                 // Delete face profile (GDPR / DPDP right to erasure)

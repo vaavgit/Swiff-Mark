@@ -35,6 +35,22 @@ class AttendanceViewModel(
     private val _isSyncingSessions = MutableStateFlow(false)
     val isSyncingSessions: StateFlow<Boolean> = _isSyncingSessions.asStateFlow()
 
+    private val cachedLogsByPhoto = mutableMapOf<String, List<com.vaibhav.facialattendancesystem.data.RecognitionLog>>()
+
+    fun cacheRecognitionLogs(photoLabel: String, logs: List<com.vaibhav.facialattendancesystem.data.RecognitionLog>) {
+        synchronized(cachedLogsByPhoto) {
+            cachedLogsByPhoto[photoLabel] = logs
+        }
+    }
+
+    fun consumeCachedRecognitionLogs(): List<com.vaibhav.facialattendancesystem.data.RecognitionLog> {
+        synchronized(cachedLogsByPhoto) {
+            val all = cachedLogsByPhoto.values.flatten()
+            cachedLogsByPhoto.clear()
+            return all
+        }
+    }
+
     fun loadRosterAndEmbeddings(classId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { _isLoadingRoster.value = true }
