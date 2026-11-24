@@ -2,7 +2,7 @@
 
 [![Download APK](https://img.shields.io/badge/Download_APK-Latest-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/vaavgit/Swiff-Mark/releases/latest)
 [![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
-[![Kotlin](https://img.shields.io/badge/Kotlin-1.9+-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0+-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -79,7 +79,7 @@ Recognition runs locally on the mobile device without sending raw photos to exte
 1. **Face Detection** — Google ML Kit detects all faces in the high-resolution classroom photo.
 2. **Alignment** — Each detected face chip is normalized to standard 112×112 dimensions using affine transformations on facial landmark geometry.
 3. **Embedding Generation** — TensorFlow Lite processes the aligned face through a mobile-optimized AdaFace neural network, producing a 512-dimensional numerical vector.
-4. **Cosine Matching** — Extracted vectors are compared against enrolled student vectors using nearest-neighbor cosine similarity. Adaptive thresholds are applied based on the number of enrolled students.
+4. **Cosine Matching** — Extracted vectors are compared against enrolled student vectors using nearest-neighbor cosine similarity, with 1-to-1 bipartite matching across multiple faces and adaptive thresholds based on face size and classroom distance.
 5. **Dual-Capture Cross-Check** — A student must appear in both the start-of-class photo and the end-of-class photo to be marked Present, eliminating single-photo proxy fraud.
 6. **Local Storage & Sync** — Results save immediately to local Room SQLite storage and sync with Supabase cloud when connectivity is available.
 
@@ -94,7 +94,7 @@ Each student completes a guided 4-step enrollment:
 | 3 | Left 3D — turn head to your left | Right side of face profile |
 | 4 | Smile / Liveness | Anti-spoof liveness confirmation |
 
-The app captures each angle automatically when the pose is held steady for 350ms (Apple Face ID style), processes each frame through AdaFace, and runs a pairwise cosine similarity check across all four embeddings to verify they belong to the same person. The final stored embedding is an averaged fusion of all four angles for maximum robustness.
+Once your face is aligned inside the oval guide and passes live pose and quality checks, tap **Capture Photo** for each angle. The app processes each frame through AdaFace and runs a pairwise cosine similarity check across all four embeddings to verify they belong to the same person. The final stored embedding is an averaged fusion of all four angles for maximum robustness.
 
 ---
 
@@ -123,7 +123,7 @@ Download the latest release directly to your Android device from the [Releases p
 **For Students:**
 1. Select **Student** on the welcome screen and register your account.
 2. Enter your teacher's join code to enroll in a class.
-3. Complete the 4-step face enrollment — follow the on-screen direction prompts and hold each pose steady.
+3. Complete the 4-step face enrollment — follow the on-screen direction prompts and tap **Capture Photo** for each angle.
 4. After enrollment, your attendance is tracked automatically every time the teacher runs a session.
 
 ---
@@ -140,7 +140,7 @@ Download the latest release directly to your Android device from the [Releases p
 | Face Recognition | TensorFlow Lite — AdaFace 512-D embeddings |
 | Computer Vision | OpenCV (affine alignment & quality checks) |
 | Local Database | Room (SQLite) |
-| Preferences | Android Jetpack DataStore |
+| Session Storage | EncryptedSharedPreferences (AES-256-GCM) |
 | Background Sync | Android Jetpack WorkManager |
 | Cloud Backend | Supabase (PostgreSQL, Row-Level Security, Auth) |
 | Camera | CameraX (front camera for enrollment, rear for attendance) |
